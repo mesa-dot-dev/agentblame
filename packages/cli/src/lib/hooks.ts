@@ -258,68 +258,6 @@ export async function installAllHooks(
 }
 
 /**
- * Install global git hook via core.hooksPath
- * This makes agentblame work for ALL repos without per-repo setup
- */
-export async function installGlobalGitHook(): Promise<boolean> {
-  const globalHooksDir = path.join(AGENTBLAME_ROOT, "git-hooks");
-  const hookPath = path.join(globalHooksDir, "post-commit");
-
-  // Find the CLI script in the dist/ directory (always run compiled .js)
-  const distDir = getDistDir(__dirname);
-  const cliScript = path.resolve(distDir, "index.js");
-
-  const hookContent = `#!/bin/sh
-# Agent Blame - Auto-process commits for AI attribution
-# Process the commit and attach attribution notes
-bun run "${cliScript}" process HEAD 2>/dev/null || true
-
-# Push notes to remote (silently fails if no notes or no remote)
-git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
-`;
-
-  try {
-    await fs.promises.mkdir(globalHooksDir, { recursive: true });
-    await fs.promises.writeFile(hookPath, hookContent, { mode: 0o755 });
-
-    // Set global core.hooksPath
-    const { execSync } = await import("node:child_process");
-    execSync(`git config --global core.hooksPath "${globalHooksDir}"`, {
-      stdio: "pipe",
-    });
-
-    return true;
-  } catch (err) {
-    console.error("Failed to install global git hook:", err);
-    return false;
-  }
-}
-
-/**
- * Uninstall global git hook
- */
-export async function uninstallGlobalGitHook(): Promise<boolean> {
-  try {
-    const { execSync } = await import("node:child_process");
-
-    // Remove core.hooksPath config
-    execSync("git config --global --unset core.hooksPath", {
-      stdio: "pipe",
-    });
-
-    // Remove hooks directory
-    const globalHooksDir = path.join(AGENTBLAME_ROOT, "git-hooks");
-    if (fs.existsSync(globalHooksDir)) {
-      await fs.promises.rm(globalHooksDir, { recursive: true });
-    }
-
-    return true;
-  } catch {
-    return true; // Ignore errors (config might not exist)
-  }
-}
-
-/**
  * Install git post-commit hook to auto-process commits (per-repo)
  */
 export async function installGitHook(repoRoot: string): Promise<boolean> {
