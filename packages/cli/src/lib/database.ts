@@ -8,7 +8,6 @@
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentBlameDir } from "./util";
 import type { AiProvider, MatchType, CapturedLine } from "./types";
 
 // =============================================================================
@@ -91,12 +90,38 @@ CREATE INDEX IF NOT EXISTS idx_edits_content_hash ON edits(content_hash);
 // =============================================================================
 
 let dbInstance: Database | null = null;
+let currentAgentBlameDir: string | null = null;
+
+/**
+ * Set the agentblame directory for database operations.
+ * Must be called before using any database functions.
+ */
+export function setAgentBlameDir(dir: string): void {
+  if (currentAgentBlameDir !== dir) {
+    // Close existing connection if switching directories
+    if (dbInstance) {
+      dbInstance.close();
+      dbInstance = null;
+    }
+    currentAgentBlameDir = dir;
+  }
+}
+
+/**
+ * Get the current agentblame directory.
+ */
+export function getAgentBlameDir(): string | null {
+  return currentAgentBlameDir;
+}
 
 /**
  * Get the database file path
  */
 export function getDbPath(): string {
-  return path.join(getAgentBlameDir(), "agentblame.db");
+  if (!currentAgentBlameDir) {
+    throw new Error("agentblame directory not set. Call setAgentBlameDir() first.");
+  }
+  return path.join(currentAgentBlameDir, "agentblame.db");
 }
 
 /**

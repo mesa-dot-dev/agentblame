@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
@@ -34,9 +35,27 @@ export function computeNormalizedHash(content: string): string {
 }
 
 /**
- * Get the agentblame directory path (~/.agentblame)
+ * Find the .agentblame directory by walking up from a file path.
+ * Returns null if not found (file is not in an initialized repo).
  */
-export function getAgentBlameDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  return `${home}/.agentblame`;
+export function findAgentBlameDir(filePath: string): string | null {
+  let dir = path.dirname(filePath);
+
+  while (dir !== path.dirname(dir)) {
+    const agentblameDir = path.join(dir, ".agentblame");
+    if (fs.existsSync(agentblameDir)) {
+      return agentblameDir;
+    }
+    dir = path.dirname(dir);
+  }
+
+  return null;
+}
+
+/**
+ * Get the agentblame directory for a specific repo root.
+ * Used during init when we know the repo root.
+ */
+export function getAgentBlameDirForRepo(repoRoot: string): string {
+  return path.join(repoRoot, ".agentblame");
 }

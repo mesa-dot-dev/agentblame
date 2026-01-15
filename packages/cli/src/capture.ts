@@ -16,7 +16,8 @@
 
 import * as crypto from "node:crypto";
 import { diffLines } from "diff";
-import { insertEdit } from "./lib/database";
+import { insertEdit, setAgentBlameDir } from "./lib/database";
+import { findAgentBlameDir } from "./lib/util";
 
 // =============================================================================
 // Types
@@ -317,7 +318,7 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function main(): Promise<void> {
+export async function runCapture(): Promise<void> {
   try {
     const { provider, event } = parseArgs();
     const input = await readStdin();
@@ -342,6 +343,15 @@ async function main(): Promise<void> {
 
     // Save all edits to SQLite database
     for (const edit of edits) {
+      // Find the agentblame directory for this file
+      const agentblameDir = findAgentBlameDir(edit.file_path);
+      if (!agentblameDir) {
+        // File is not in an initialized repo, skip silently
+        continue;
+      }
+
+      // Set the database directory and save
+      setAgentBlameDir(agentblameDir);
       saveEdit(edit);
     }
 
@@ -353,4 +363,3 @@ async function main(): Promise<void> {
   }
 }
 
-main();
