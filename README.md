@@ -50,12 +50,17 @@ curl -fsSL https://bun.sh/install | bash
 
 ### 1. Install & Set Up
 
+Install the CLI globally
 ```bash
 npm install -g @mesadev/agentblame
-agentblame install
 ```
 
-This sets up everything automatically:
+Then in a git repository run
+```bash
+agentblame init
+```
+
+This sets up everything automatically for your repository:
 - Editor hooks for Cursor and Claude Code
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
@@ -72,12 +77,27 @@ This sets up everything automatically:
 
 ### 2. Commit the Workflow
 
-The install command creates `.github/workflows/agentblame.yml`. Commit this file to enable squash/merge support:
+In order preserve attribution across when squash merging you need a custom [GitHub Actions workflow](.github/workflows/agentblame.yml).
+You can either copy + paste that into your own repo or rely on the init command to do it for you.
 
 ```bash
 git add .github/workflows/agentblame.yml
 git commit -m "Add Agent Blame workflow for squash/merge support"
 git push
+```
+
+When you merge a PR with squash/rebase, the original commits are replaced with new ones. The GitHub Actions workflow automatically:
+
+1. Detects the merge type (squash, rebase, or regular merge)
+2. Retrieves attribution data from the original PR commits
+3. Transfers attribution to the new merge commit(s)
+4. Pushes the updated notes to the repository
+
+If you do not want to use a workflow you can manually sync attribution after pulling a squash merge locally:
+
+```bash
+git pull origin main
+agentblame sync
 ```
 
 ---
@@ -122,40 +142,6 @@ agentblame blame src/auth.ts
 
 ---
 
-## Squash & Merge Support
-
-Agent Blame preserves attribution even when you use **Squash and merge** or **Rebase and merge** on GitHub.
-
-### How It Works
-
-When you merge a PR with squash/rebase, the original commits are replaced with new ones. The GitHub Actions workflow automatically:
-
-1. Detects the merge type (squash, rebase, or regular merge)
-2. Retrieves attribution data from the original PR commits
-3. Transfers attribution to the new merge commit(s)
-4. Pushes the updated notes to the repository
-
-### Setup
-
-Attribution transfer happens automatically if you've committed the workflow file:
-
-```
-.github/workflows/agentblame.yml
-```
-
-No manual intervention required after initial setup.
-
-### Manual Sync (Optional)
-
-If you need to manually sync attribution after pulling a squashed merge locally:
-
-```bash
-git pull origin main
-agentblame sync
-```
-
----
-
 ## Chrome Extension Features
 
 - AI percentage badge per file
@@ -168,8 +154,7 @@ agentblame sync
 
 | Command | Description |
 |---------|-------------|
-| `agentblame install` | Set up hooks and GitHub Actions workflow (current repo) |
-| `agentblame install --global` | Set up hooks for all repos (no workflow) |
+| `agentblame init` | Set up hooks and GitHub Actions workflow (current repo) |
 | `agentblame uninstall` | Remove hooks and workflow |
 | `agentblame blame <file>` | Show AI attribution for a file |
 | `agentblame blame --summary` | Show summary only |
@@ -215,9 +200,7 @@ agentblame sync
 
 ---
 
-<details>
-<summary><strong>For Developers</strong></summary>
-
+## Contributing
 ### Prerequisites
 
 - [Bun](https://bun.sh/) v1.0+
@@ -269,8 +252,15 @@ cd packages/cli && npm publish --otp=YOUR_CODE
 
 **Chrome:** Automatically built on GitHub releases.
 
-</details>
-
+### Roadmap
+Contributions welcome! Here's what we'd love help with:
+- Support for other coding agents
+  - Opencode
+  - VSCode / Copilot
+  - Antigravity
+  - and more!
+- Multi-browser extension support
+- Support for JJ VCS
 ---
 
 ## License
