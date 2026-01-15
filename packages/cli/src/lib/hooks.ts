@@ -2,96 +2,60 @@
  * Hook Installation
  *
  * Install and manage hooks for Cursor and Claude Code.
+ * Hooks are installed at repo-level for isolation.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { getDistDir } from "./util";
 
-export const AGENTBLAME_ROOT = path.join(os.homedir(), ".agentblame");
-
-// Cursor hooks.json location
-export const CURSOR_HOOKS_CONFIG = path.join(
-  os.homedir(),
-  ".cursor",
-  "hooks.json"
-);
-
-// Claude Code settings.json location
-export const CLAUDE_SETTINGS_DIR = path.join(os.homedir(), ".claude");
-export const CLAUDE_SETTINGS_FILE = path.join(
-  CLAUDE_SETTINGS_DIR,
-  "settings.json"
-);
-
+/**
+ * Get the Cursor hooks.json path for a repo.
+ */
+export function getCursorHooksPath(repoRoot: string): string {
+  return path.join(repoRoot, ".cursor", "hooks.json");
+}
 
 /**
- * Find the capture script path.
- * Looks in common locations for the compiled capture.js script.
+ * Get the Claude Code settings.json path for a repo.
  */
-function findCaptureScript(): string | null {
-  // Use getDistDir to find the dist/ directory, then look for capture.js
-  const distDir = getDistDir(__dirname);
-  const captureJs = path.join(distDir, "capture.js");
-
-  if (fs.existsSync(captureJs)) {
-    return captureJs;
-  }
-
-  // Fallback: check npm global install locations
-  const globalPaths = [
-    path.join(os.homedir(), ".npm-global", "lib", "node_modules", "@mesadev", "agentblame", "dist", "capture.js"),
-    path.join("/usr", "local", "lib", "node_modules", "@mesadev", "agentblame", "dist", "capture.js"),
-  ];
-
-  for (const p of globalPaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
-  return null;
+export function getClaudeSettingsPath(repoRoot: string): string {
+  return path.join(repoRoot, ".claude", "settings.json");
 }
+
 
 /**
  * Generate the hook command for a given provider.
+ * Uses bunx to run the agentblame capture command, which works on any machine.
  */
 function getHookCommand(
   provider: "cursor" | "claude",
-  captureScript: string,
   event?: string
 ): string {
   const eventArg = event ? ` --event ${event}` : "";
-  return `bun run "${captureScript}" --provider ${provider}${eventArg}`;
+  return `bunx @mesadev/agentblame capture --provider ${provider}${eventArg}`;
 }
 
 /**
- * Install the Cursor hooks and configure ~/.cursor/hooks.json
+ * Install the Cursor hooks at repo-level (.cursor/hooks.json)
  */
-export async function installCursorHooks(
-  captureScript?: string
-): Promise<boolean> {
+export async function installCursorHooks(repoRoot: string): Promise<boolean> {
   if (process.platform === "win32") {
     console.error("Windows is not supported yet");
     return false;
   }
 
-  const script = captureScript || findCaptureScript();
-  if (!script) {
-    console.error("Could not find capture script. Make sure agentblame is installed correctly.");
-    return false;
-  }
+  const hooksPath = getCursorHooksPath(repoRoot);
 
   try {
-    // Update ~/.cursor/hooks.json
-    await fs.promises.mkdir(path.dirname(CURSOR_HOOKS_CONFIG), {
+    // Create .cursor directory if it doesn't exist
+    await fs.promises.mkdir(path.dirname(hooksPath), {
       recursive: true,
     });
 
     let config: any = {};
     try {
-      const existing = await fs.promises.readFile(CURSOR_HOOKS_CONFIG, "utf8");
+      const existing = await fs.promises.readFile(hooksPath, "utf8");
       config = JSON.parse(existing || "{}");
     } catch {
       // File doesn't exist or invalid JSON
@@ -100,7 +64,7 @@ export async function installCursorHooks(
     config.version = config.version ?? 1;
     config.hooks = config.hooks ?? {};
 
-    const fileEditCommand = getHookCommand("cursor", script, "afterFileEdit");
+    const fileEditCommand = getHookCommand("cursor", "afterFileEdit");
 
     // Configure afterFileEdit
     config.hooks.afterFileEdit = config.hooks.afterFileEdit ?? [];
@@ -125,7 +89,7 @@ export async function installCursorHooks(
     }
 
     await fs.promises.writeFile(
-      CURSOR_HOOKS_CONFIG,
+      hooksPath,
       JSON.stringify(config, null, 2),
       "utf8"
     );
@@ -138,29 +102,23 @@ export async function installCursorHooks(
 }
 
 /**
- * Install the Claude Code hooks and configure ~/.claude/settings.json
+ * Install the Claude Code hooks at repo-level (.claude/settings.json)
  */
-export async function installClaudeHooks(
-  captureScript?: string
-): Promise<boolean> {
+export async function installClaudeHooks(repoRoot: string): Promise<boolean> {
   if (process.platform === "win32") {
     console.error("Windows is not supported yet");
     return false;
   }
 
-  const script = captureScript || findCaptureScript();
-  if (!script) {
-    console.error("Could not find capture script. Make sure agentblame is installed correctly.");
-    return false;
-  }
+  const settingsPath = getClaudeSettingsPath(repoRoot);
 
   try {
-    // Update ~/.claude/settings.json
-    await fs.promises.mkdir(CLAUDE_SETTINGS_DIR, { recursive: true });
+    // Create .claude directory if it doesn't exist
+    await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true });
 
     let config: any = {};
     try {
-      const existing = await fs.promises.readFile(CLAUDE_SETTINGS_FILE, "utf8");
+      const existing = await fs.promises.readFile(settingsPath, "utf8");
       config = JSON.parse(existing || "{}");
     } catch {
       // File doesn't exist or invalid JSON
@@ -168,7 +126,7 @@ export async function installClaudeHooks(
 
     config.hooks = config.hooks ?? {};
 
-    const hookCommand = getHookCommand("claude", script);
+    const hookCommand = getHookCommand("claude");
 
     // Configure PostToolUse hook for Edit/Write/MultiEdit
     config.hooks.PostToolUse = config.hooks.PostToolUse ?? [];
@@ -193,7 +151,7 @@ export async function installClaudeHooks(
     });
 
     await fs.promises.writeFile(
-      CLAUDE_SETTINGS_FILE,
+      settingsPath,
       JSON.stringify(config, null, 2),
       "utf8"
     );
@@ -206,12 +164,13 @@ export async function installClaudeHooks(
 }
 
 /**
- * Check if Cursor hooks are installed.
+ * Check if Cursor hooks are installed for a repo.
  */
-export async function areCursorHooksInstalled(): Promise<boolean> {
+export async function areCursorHooksInstalled(repoRoot: string): Promise<boolean> {
   try {
+    const hooksPath = getCursorHooksPath(repoRoot);
     const config = JSON.parse(
-      await fs.promises.readFile(CURSOR_HOOKS_CONFIG, "utf8")
+      await fs.promises.readFile(hooksPath, "utf8")
     );
 
     const hasFileEdit = config.hooks?.afterFileEdit?.some(
@@ -225,12 +184,13 @@ export async function areCursorHooksInstalled(): Promise<boolean> {
 }
 
 /**
- * Check if Claude Code hooks are installed.
+ * Check if Claude Code hooks are installed for a repo.
  */
-export async function areClaudeHooksInstalled(): Promise<boolean> {
+export async function areClaudeHooksInstalled(repoRoot: string): Promise<boolean> {
   try {
+    const settingsPath = getClaudeSettingsPath(repoRoot);
     const config = JSON.parse(
-      await fs.promises.readFile(CLAUDE_SETTINGS_FILE, "utf8")
+      await fs.promises.readFile(settingsPath, "utf8")
     );
 
     const hasHook = config.hooks?.PostToolUse?.some((h: any) =>
@@ -247,13 +207,13 @@ export async function areClaudeHooksInstalled(): Promise<boolean> {
 }
 
 /**
- * Install all hooks (Cursor and Claude Code)
+ * Install all hooks (Cursor and Claude Code) for a repo
  */
 export async function installAllHooks(
-  captureScript?: string
+  repoRoot: string
 ): Promise<{ cursor: boolean; claude: boolean }> {
-  const cursor = await installCursorHooks(captureScript);
-  const claude = await installClaudeHooks(captureScript);
+  const cursor = await installCursorHooks(repoRoot);
+  const claude = await installClaudeHooks(repoRoot);
   return { cursor, claude };
 }
 
@@ -348,13 +308,14 @@ export async function uninstallGitHook(repoRoot: string): Promise<boolean> {
 }
 
 /**
- * Uninstall Cursor hooks
+ * Uninstall Cursor hooks from a repo
  */
-export async function uninstallCursorHooks(): Promise<boolean> {
+export async function uninstallCursorHooks(repoRoot: string): Promise<boolean> {
   try {
-    if (fs.existsSync(CURSOR_HOOKS_CONFIG)) {
+    const hooksPath = getCursorHooksPath(repoRoot);
+    if (fs.existsSync(hooksPath)) {
       const config = JSON.parse(
-        await fs.promises.readFile(CURSOR_HOOKS_CONFIG, "utf8")
+        await fs.promises.readFile(hooksPath, "utf8")
       );
 
       if (config.hooks?.afterFileEdit) {
@@ -366,7 +327,7 @@ export async function uninstallCursorHooks(): Promise<boolean> {
       }
 
       await fs.promises.writeFile(
-        CURSOR_HOOKS_CONFIG,
+        hooksPath,
         JSON.stringify(config, null, 2),
         "utf8"
       );
@@ -379,13 +340,14 @@ export async function uninstallCursorHooks(): Promise<boolean> {
 }
 
 /**
- * Uninstall Claude Code hooks
+ * Uninstall Claude Code hooks from a repo
  */
-export async function uninstallClaudeHooks(): Promise<boolean> {
+export async function uninstallClaudeHooks(repoRoot: string): Promise<boolean> {
   try {
-    if (fs.existsSync(CLAUDE_SETTINGS_FILE)) {
+    const settingsPath = getClaudeSettingsPath(repoRoot);
+    if (fs.existsSync(settingsPath)) {
       const config = JSON.parse(
-        await fs.promises.readFile(CLAUDE_SETTINGS_FILE, "utf8")
+        await fs.promises.readFile(settingsPath, "utf8")
       );
 
       if (config.hooks?.PostToolUse) {
@@ -400,7 +362,7 @@ export async function uninstallClaudeHooks(): Promise<boolean> {
       }
 
       await fs.promises.writeFile(
-        CLAUDE_SETTINGS_FILE,
+        settingsPath,
         JSON.stringify(config, null, 2),
         "utf8"
       );

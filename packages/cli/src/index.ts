@@ -10,10 +10,13 @@
  */
 
 import * as path from "node:path";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { blame } from "./blame";
 import { sync } from "./sync";
 import { runProcess } from "./process";
+import { runCapture } from "./capture";
 import {
   installCursorHooks,
   installClaudeHooks,
@@ -27,9 +30,10 @@ import {
   configureNotesSync,
   removeNotesSync,
   initDatabase,
+  setAgentBlameDir,
+  getAgentBlameDirForRepo,
   getPendingEditCount,
   getRecentPendingEdits,
-  getDistDir,
   cleanupOldEntries,
 } from "./lib";
 
@@ -51,10 +55,13 @@ const command = args[0];
 async function main(): Promise<void> {
   switch (command) {
     case "init":
-      await runInit();
+      await runInit(args.slice(1));
       break;
-    case "uninstall":
-      await runUninstall();
+    case "clean":
+      await runClean(args.slice(1));
+      break;
+    case "capture":
+      await runCapture();
       break;
     case "blame":
       await runBlame(args.slice(1));
@@ -89,7 +96,9 @@ Agent Blame - Track AI-generated code in your commits
 
 Usage:
   agentblame init              Set up hooks for current repo
-  agentblame uninstall         Remove hooks from current repo
+  agentblame init --force      Set up hooks and clean up old global install
+  agentblame clean             Remove hooks from current repo
+  agentblame clean --force     Also clean up old global install
   agentblame blame <file>      Show AI attribution for a file
   agentblame blame --summary   Show summary only
   agentblame blame --json      Output as JSON
@@ -103,7 +112,66 @@ Examples:
 `);
 }
 
-async function runInit(): Promise<void> {
+/**
+ * Clean up global hooks and database from previous versions.
+ */
+async function cleanupGlobalInstall(): Promise<{ cursor: boolean; claude: boolean; db: boolean }> {
+  const results = { cursor: false, claude: false, db: false };
+  const home = os.homedir();
+
+  // Clean up global Cursor hooks
+  const globalCursorHooks = path.join(home, ".cursor", "hooks.json");
+  try {
+    if (fs.existsSync(globalCursorHooks)) {
+      const config = JSON.parse(await fs.promises.readFile(globalCursorHooks, "utf8"));
+      if (config.hooks?.afterFileEdit) {
+        config.hooks.afterFileEdit = config.hooks.afterFileEdit.filter(
+          (h: any) => !h?.command?.includes("agentblame") && !h?.command?.includes("capture")
+        );
+      }
+      await fs.promises.writeFile(globalCursorHooks, JSON.stringify(config, null, 2), "utf8");
+      results.cursor = true;
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  // Clean up global Claude hooks
+  const globalClaudeSettings = path.join(home, ".claude", "settings.json");
+  try {
+    if (fs.existsSync(globalClaudeSettings)) {
+      const config = JSON.parse(await fs.promises.readFile(globalClaudeSettings, "utf8"));
+      if (config.hooks?.PostToolUse) {
+        config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
+          (h: any) => !h?.hooks?.some(
+            (hh: any) => hh?.command?.includes("agentblame") || hh?.command?.includes("capture")
+          )
+        );
+      }
+      await fs.promises.writeFile(globalClaudeSettings, JSON.stringify(config, null, 2), "utf8");
+      results.claude = true;
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  // Clean up global database
+  const globalDb = path.join(home, ".agentblame");
+  try {
+    if (fs.existsSync(globalDb)) {
+      await fs.promises.rm(globalDb, { recursive: true });
+      results.db = true;
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return results;
+}
+
+async function runInit(initArgs: string[] = []): Promise<void> {
+  const forceCleanup = initArgs.includes("--force") || initArgs.includes("-f");
+
   // Check if Bun is installed (required for hooks)
   if (!isBunInstalled()) {
     const installCmd = process.platform === "win32"
@@ -144,26 +212,53 @@ async function runInit(): Promise<void> {
   console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
   console.log("");
 
+  // Clean up global install if --force flag is passed
+  if (forceCleanup) {
+    console.log("  \x1b[2mCleaning up global install...\x1b[0m");
+    const cleanup = await cleanupGlobalInstall();
+    if (cleanup.cursor) console.log("  \x1b[32m✓\x1b[0m Removed global Cursor hooks");
+    if (cleanup.claude) console.log("  \x1b[32m✓\x1b[0m Removed global Claude hooks");
+    if (cleanup.db) console.log("  \x1b[32m✓\x1b[0m Removed global database");
+    if (!cleanup.cursor && !cleanup.claude && !cleanup.db) {
+      console.log("  \x1b[2m  No global install found\x1b[0m");
+    }
+    console.log("");
+  }
+
   // Track results
   const results: { name: string; success: boolean }[] = [];
 
-  // Initialize SQLite database
+  // Create .agentblame directory and initialize SQLite database
   try {
+    const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+    setAgentBlameDir(agentblameDir);
     initDatabase();
     results.push({ name: "Database", success: true });
   } catch (err) {
     results.push({ name: "Database", success: false });
   }
 
-  // Find capture script in the dist/ directory (always run compiled .js)
-  const distDir = getDistDir(__dirname);
-  const captureScript = path.resolve(distDir, "capture.js");
+  // Add .agentblame/ to .gitignore
+  try {
+    const gitignorePath = path.join(repoRoot, ".gitignore");
+    let gitignoreContent = "";
+    if (fs.existsSync(gitignorePath)) {
+      gitignoreContent = await fs.promises.readFile(gitignorePath, "utf8");
+    }
+    if (!gitignoreContent.includes(".agentblame")) {
+      const entry = "\n# Agent Blame local database\n.agentblame/\n";
+      await fs.promises.appendFile(gitignorePath, entry);
+    }
+    results.push({ name: "Updated .gitignore", success: true });
+  } catch (err) {
+    results.push({ name: "Updated .gitignore", success: false });
+  }
 
-  // Install editor hooks
-  const cursorSuccess = await installCursorHooks(captureScript);
+  // Install editor hooks (repo-level)
+  const cursorSuccess = await installCursorHooks(repoRoot);
   results.push({ name: "Cursor hooks", success: cursorSuccess });
 
-  const claudeSuccess = await installClaudeHooks(captureScript);
+  const claudeSuccess = await installClaudeHooks(repoRoot);
   results.push({ name: "Claude Code hooks", success: claudeSuccess });
 
   // Install repo hooks and workflow
@@ -211,7 +306,9 @@ async function runInit(): Promise<void> {
   console.log("");
 }
 
-async function runUninstall(): Promise<void> {
+async function runClean(uninstallArgs: string[] = []): Promise<void> {
+  const forceCleanup = uninstallArgs.includes("--force") || uninstallArgs.includes("-f");
+
   // Validate we're in a git repo
   const repoRoot = await getRepoRoot(process.cwd());
   if (!repoRoot) {
@@ -233,14 +330,27 @@ async function runUninstall(): Promise<void> {
   console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
   console.log("");
 
+  // Clean up global install if --force flag is passed
+  if (forceCleanup) {
+    console.log("  \x1b[2mCleaning up global install...\x1b[0m");
+    const cleanup = await cleanupGlobalInstall();
+    if (cleanup.cursor) console.log("  \x1b[32m✓\x1b[0m Removed global Cursor hooks");
+    if (cleanup.claude) console.log("  \x1b[32m✓\x1b[0m Removed global Claude hooks");
+    if (cleanup.db) console.log("  \x1b[32m✓\x1b[0m Removed global database");
+    if (!cleanup.cursor && !cleanup.claude && !cleanup.db) {
+      console.log("  \x1b[2m  No global install found\x1b[0m");
+    }
+    console.log("");
+  }
+
   // Track results
   const results: { name: string; success: boolean }[] = [];
 
-  // Remove editor hooks
-  const cursorSuccess = await uninstallCursorHooks();
+  // Remove editor hooks (repo-level)
+  const cursorSuccess = await uninstallCursorHooks(repoRoot);
   results.push({ name: "Cursor hooks", success: cursorSuccess });
 
-  const claudeSuccess = await uninstallClaudeHooks();
+  const claudeSuccess = await uninstallClaudeHooks(repoRoot);
   results.push({ name: "Claude Code hooks", success: claudeSuccess });
 
   // Remove repo hooks and workflow
@@ -252,6 +362,18 @@ async function runUninstall(): Promise<void> {
 
   const githubActionSuccess = await uninstallGitHubAction(repoRoot);
   results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
+
+  // Remove .agentblame directory (database)
+  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+  let dbSuccess = true;
+  try {
+    if (fs.existsSync(agentblameDir)) {
+      await fs.promises.rm(agentblameDir, { recursive: true });
+    }
+  } catch {
+    dbSuccess = false;
+  }
+  results.push({ name: "Database", success: dbSuccess });
 
   // Print results
   console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
@@ -315,6 +437,16 @@ async function runSync(args: string[]): Promise<void> {
 }
 
 async function runStatus(): Promise<void> {
+  // Find repo root and set database directory
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (!repoRoot) {
+    console.error("Not in a git repository");
+    process.exit(1);
+  }
+
+  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+  setAgentBlameDir(agentblameDir);
+
   console.log("\nAgent Blame Status\n");
 
   const pendingCount = getPendingEditCount();
@@ -339,6 +471,16 @@ async function runStatus(): Promise<void> {
 }
 
 async function runCleanup(): Promise<void> {
+  // Find repo root and set database directory
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (!repoRoot) {
+    console.error("Not in a git repository");
+    process.exit(1);
+  }
+
+  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+  setAgentBlameDir(agentblameDir);
+
   console.log("\nAgent Blame Cleanup\n");
 
   const result = cleanupOldEntries();

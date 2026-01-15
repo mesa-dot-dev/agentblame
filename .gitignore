@@ -49,3 +49,13 @@ tmp/
 temp/
 *.tmp
 agentblame-chrome.zip
+
+# Agent Blame local database
+.agentblame/
+
+# Editor hook configs (created by agentblame init)
+.claude/
+.cursor/
+
+# Build artifacts
+packages/chrome/agentblame-chrome-*.zip

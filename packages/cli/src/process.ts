@@ -11,6 +11,7 @@ import {
   getCommitMoves,
   buildMoveIndex,
   attachNote,
+  getAgentBlameDirForRepo,
   type RangeAttribution,
   type LineAttribution,
   type MatchResult,
@@ -20,6 +21,7 @@ import {
   markEditsAsMatched,
   findEditsByFile,
   getEditLines,
+  setAgentBlameDir,
 } from "./lib/database";
 
 // Terminal colors
@@ -229,6 +231,10 @@ export async function runProcess(sha?: string): Promise<void> {
     console.error("Error: Not in a git repository");
     process.exit(1);
   }
+
+  // Set up database directory for this repo
+  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+  setAgentBlameDir(agentblameDir);
 
   // Always resolve to actual SHA (not HEAD)
   let commitSha = sha || "HEAD";

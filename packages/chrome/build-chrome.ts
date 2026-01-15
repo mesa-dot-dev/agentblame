@@ -6,8 +6,9 @@
  */
 
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, existsSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 
 const SRC_DIR = join(import.meta.dir, "src");
 const DIST_DIR = join(import.meta.dir, "dist");
@@ -110,6 +111,28 @@ function createPlaceholderIcons(): void {
 }
 
 /**
+ * Create zip file for Chrome Web Store upload
+ */
+function createZip(): string {
+  // Read version from manifest
+  const manifest = JSON.parse(readFileSync(join(DIST_DIR, "manifest.json"), "utf-8"));
+  const version = manifest.version;
+  const zipName = `agentblame-chrome-${version}.zip`;
+  const zipPath = join(import.meta.dir, zipName);
+
+  // Remove old zip if exists
+  if (existsSync(zipPath)) {
+    rmSync(zipPath);
+  }
+
+  // Create zip (using system zip command)
+  execSync(`cd "${DIST_DIR}" && zip -r "${zipPath}" .`, { stdio: "pipe" });
+
+  console.log(`✓ Created ${zipName}`);
+  return zipPath;
+}
+
+/**
  * Main build function
  */
 async function main(): Promise<void> {
@@ -120,9 +143,11 @@ async function main(): Promise<void> {
     copyStatic();
     await bundle();
     createPlaceholderIcons();
+    const zipPath = createZip();
 
     console.log("\n✓ Build complete!");
     console.log(`  Output: ${DIST_DIR}`);
+    console.log(`  Zip: ${zipPath}`);
     console.log("\nTo load in Chrome:");
     console.log("  1. Go to chrome://extensions");
     console.log("  2. Enable 'Developer mode'");
