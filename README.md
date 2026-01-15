@@ -118,6 +118,12 @@ See AI attribution directly on GitHub Pull Requests.
 3. Click **Load unpacked** and select the extracted folder
 4. Click the extension icon and add your [GitHub token](https://github.com/settings/tokens) (needs `repo` scope)
 
+**GitHub Token**
+You can use either GitHub's Fine Grained Tokens (recommended) or the classic tokens.
+1. For Fine Grained Tokens it needs to have access to your repo with the `contents` scope
+![Fine Grained Token Scope](docs/token-permissions.png)
+2. For classic tokens you need to check the `repo` scopes
+
 <br>
 
 ![Chrome Extension Install](docs/chrome-install.gif)
@@ -261,6 +267,7 @@ Contributions welcome! Here's what we'd love help with:
   - and more!
 - Multi-browser extension support
 - Support for JJ VCS
+- Capture and store prompts / chain-of-thought for each edit
 ---
 
 ## License
