@@ -28,7 +28,7 @@ jobs:
 
       - name: Fetch attribution notes
         run: |
-          git fetch origin refs/notes/ab:refs/notes/ab 2>/dev/null || echo "No existing notes"
+          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing notes"
 
       - name: Transfer notes if needed
         run: bun run packages/action/src/transfer-notes.ts
@@ -42,4 +42,4 @@ jobs:
 
       - name: Push notes
         run: |
-          git push origin refs/notes/ab 2>/dev/null || echo "No notes to push"
+          git push origin refs/notes/agentblame 2>/dev/null || echo "No notes to push"

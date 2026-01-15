@@ -19,10 +19,12 @@ import {
   installClaudeHooks,
   installGitHook,
   installGlobalGitHook,
+  installGitHubAction,
   uninstallCursorHooks,
   uninstallClaudeHooks,
   uninstallGitHook,
   uninstallGlobalGitHook,
+  uninstallGitHubAction,
   getRepoRoot,
   configureNotesSync,
   removeNotesSync,
@@ -114,93 +116,171 @@ async function runInstall(args: string[]): Promise<void> {
       ? "powershell -c \"irm bun.sh/install.ps1 | iex\""
       : "curl -fsSL https://bun.sh/install | bash";
 
-    console.error("\n┌─────────────────────────────────────────────────────────────┐");
-    console.error("│  Error: Bun is required but not installed                   │");
-    console.error("├─────────────────────────────────────────────────────────────┤");
-    console.error("│                                                             │");
-    console.error("│  Agent Blame uses Bun to run hooks for Cursor and Claude   │");
-    console.error("│  Code. Please install Bun first:                            │");
-    console.error("│                                                             │");
-    console.error(`│    ${installCmd.padEnd(55)}│`);
-    console.error("│                                                             │");
-    console.error("│  Then restart your terminal and run this command again.    │");
-    console.error("│                                                             │");
-    console.error("│  Learn more: https://bun.sh                                 │");
-    console.error("└─────────────────────────────────────────────────────────────┘\n");
+    console.log("");
+    console.log("  \x1b[31m✗\x1b[0m Bun is required but not installed");
+    console.log("");
+    console.log("  Agent Blame uses Bun to run hooks. Install it first:");
+    console.log("");
+    console.log(`    \x1b[36m${installCmd}\x1b[0m`);
+    console.log("");
+    console.log("  Then restart your terminal and run this command again.");
+    console.log("  Learn more: \x1b[36mhttps://bun.sh\x1b[0m");
+    console.log("");
     process.exit(1);
   }
 
-  console.log(`Agent Blame Setup${isGlobal ? " (Global)" : ""}\n`);
+  // For per-repo, validate we're in a git repo first
+  let repoRoot: string | null = null;
+  if (!isGlobal) {
+    repoRoot = await getRepoRoot(process.cwd());
+    if (!repoRoot) {
+      console.log("");
+      console.log("  \x1b[31m✗\x1b[0m Not in a git repository");
+      console.log("");
+      console.log("  Run this command from inside a git repository, or use:");
+      console.log("    \x1b[36magentblame install --global\x1b[0m");
+      console.log("");
+      process.exit(1);
+    }
+  }
+
+  // Header
+  console.log("");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame\x1b[0m");
+  console.log("  \x1b[2mTrack AI-generated code in your commits\x1b[0m");
+  console.log("");
+
+  if (isGlobal) {
+    console.log("  \x1b[2mMode:\x1b[0m Global (all repositories)");
+  } else {
+    const repoName = path.basename(repoRoot!);
+    console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
+  }
+  console.log("");
+
+  // Track results
+  const results: { name: string; success: boolean }[] = [];
 
   // Initialize SQLite database
   try {
     initDatabase();
-    console.log("  Database: initialized");
+    results.push({ name: "Database", success: true });
   } catch (err) {
-    console.log("  Database: failed to initialize");
-    console.error(err);
-    process.exit(1);
+    results.push({ name: "Database", success: false });
   }
 
   // Find capture script in the dist/ directory (always run compiled .js)
   const distDir = getDistDir(__dirname);
   const captureScript = path.resolve(distDir, "capture.js");
 
-  // Always install/reinstall editor hooks
+  // Install editor hooks
   const cursorSuccess = await installCursorHooks(captureScript);
-  console.log(cursorSuccess ? "  Cursor hooks: installed" : "  Cursor hooks: failed");
+  results.push({ name: "Cursor hooks", success: cursorSuccess });
 
   const claudeSuccess = await installClaudeHooks(captureScript);
-  console.log(claudeSuccess ? "  Claude Code hooks: installed" : "  Claude Code hooks: failed");
+  results.push({ name: "Claude Code hooks", success: claudeSuccess });
 
   if (isGlobal) {
     // Install global git hook (works for all repos)
     const gitHookSuccess = await installGlobalGitHook();
-    if (gitHookSuccess) {
-      console.log("  Git post-commit hook: installed (global)");
-      console.log("  Notes auto-push: auto-configures per repo on first commit");
-    } else {
-      console.log("  Git post-commit hook: failed");
-    }
+    results.push({ name: "Git hook (global)", success: gitHookSuccess });
   } else {
     // Per-repo installation
-    const repoRoot = await getRepoRoot(process.cwd());
-    if (!repoRoot) {
-      console.error("\nError: Not in a git repository. Use --global for system-wide setup.");
-      process.exit(1);
-    }
+    const gitHookSuccess = await installGitHook(repoRoot!);
+    results.push({ name: "Git post-commit hook", success: gitHookSuccess });
 
-    const gitHookSuccess = await installGitHook(repoRoot);
-    console.log(gitHookSuccess ? "  Git post-commit hook: installed" : "  Git post-commit hook: failed");
+    const notesPushSuccess = await configureNotesSync(repoRoot!);
+    results.push({ name: "Notes auto-push", success: notesPushSuccess });
 
-    const notesPushSuccess = await configureNotesSync(repoRoot);
-    console.log(notesPushSuccess ? "  Notes auto-push: configured" : "  Notes auto-push: failed");
+    const githubActionSuccess = await installGitHubAction(repoRoot!);
+    results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
   }
 
-  console.log("\nSetup complete!");
-  console.log("\nIMPORTANT: Restart Cursor/Claude Code for hooks to take effect.");
-  console.log("\nHow it works:");
-  console.log("  1. Make AI edits in Cursor or Claude Code");
-  console.log("  2. Commit your changes (attribution attached automatically)");
-  console.log("  3. Run 'agentblame blame <file>' to see attribution");
+  // Print results
+  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log("");
+
+  for (const result of results) {
+    const icon = result.success ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+    console.log(`  ${icon} ${result.name}`);
+  }
+
+  const allSuccess = results.every((r) => r.success);
+  const anySuccess = results.some((r) => r.success);
+
+  console.log("");
+  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log("");
+
+  if (allSuccess) {
+    console.log("  \x1b[32m✓\x1b[0m \x1b[1mSetup complete\x1b[0m");
+  } else if (anySuccess) {
+    console.log("  \x1b[33m!\x1b[0m \x1b[1mSetup completed with warnings\x1b[0m");
+  } else {
+    console.log("  \x1b[31m✗\x1b[0m \x1b[1mSetup failed\x1b[0m");
+  }
+
+  console.log("");
+  console.log("  \x1b[1mNext steps:\x1b[0m");
+  console.log("  \x1b[33m1.\x1b[0m Restart Cursor or Claude Code");
+  console.log("  \x1b[33m2.\x1b[0m Make AI edits and commit your changes");
+  console.log("  \x1b[33m3.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution");
+
+  if (!isGlobal) {
+    console.log("");
+    console.log("  \x1b[2mWorkflow created at:\x1b[0m .github/workflows/agentblame.yml");
+    console.log("  \x1b[2mCommit this file to enable squash/rebase merge support.\x1b[0m");
+  }
+
+  console.log("");
 }
 
 async function runUninstall(args: string[]): Promise<void> {
   const isGlobal = args.includes("--global");
 
-  console.log(`Removing Agent Blame${isGlobal ? " (Global)" : ""}...\n`);
+  // For per-repo, validate we're in a git repo first
+  let repoRoot: string | null = null;
+  if (!isGlobal) {
+    repoRoot = await getRepoRoot(process.cwd());
+    if (!repoRoot) {
+      console.log("");
+      console.log("  \x1b[31m✗\x1b[0m Not in a git repository");
+      console.log("");
+      console.log("  Run this command from inside a git repository, or use:");
+      console.log("    \x1b[36magentblame uninstall --global\x1b[0m");
+      console.log("");
+      process.exit(1);
+    }
+  }
+
+  // Header
+  console.log("");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame\x1b[0m");
+  console.log("  \x1b[2mRemoving hooks and configuration\x1b[0m");
+  console.log("");
+
+  if (isGlobal) {
+    console.log("  \x1b[2mMode:\x1b[0m Global uninstall");
+  } else {
+    const repoName = path.basename(repoRoot!);
+    console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
+  }
+  console.log("");
+
+  // Track results
+  const results: { name: string; success: boolean }[] = [];
 
   // Always remove editor hooks
   const cursorSuccess = await uninstallCursorHooks();
-  console.log(cursorSuccess ? "  Cursor hooks: removed" : "  Cursor hooks: failed");
+  results.push({ name: "Cursor hooks", success: cursorSuccess });
 
   const claudeSuccess = await uninstallClaudeHooks();
-  console.log(claudeSuccess ? "  Claude Code hooks: removed" : "  Claude Code hooks: failed");
+  results.push({ name: "Claude Code hooks", success: claudeSuccess });
 
   if (isGlobal) {
     // Remove global git hook
     const gitHookSuccess = await uninstallGlobalGitHook();
-    console.log(gitHookSuccess ? "  Git post-commit hook: removed (global)" : "  Git post-commit hook: failed");
+    results.push({ name: "Git hook (global)", success: gitHookSuccess });
 
     // Remove ~/.agentblame directory
     const fs = await import("node:fs");
@@ -209,29 +289,47 @@ async function runUninstall(args: string[]): Promise<void> {
     try {
       if (fs.existsSync(agentblameDir)) {
         await fs.promises.rm(agentblameDir, { recursive: true, force: true });
-        console.log("  Data directory: removed");
+        results.push({ name: "Data directory", success: true });
       } else {
-        console.log("  Data directory: not found");
+        results.push({ name: "Data directory", success: true });
       }
     } catch {
-      console.log("  Data directory: failed to remove");
+      results.push({ name: "Data directory", success: false });
     }
   } else {
     // Per-repo uninstallation
-    const repoRoot = await getRepoRoot(process.cwd());
-    if (!repoRoot) {
-      console.error("\nError: Not in a git repository. Use --global to remove global hooks.");
-      process.exit(1);
-    }
+    const gitHookSuccess = await uninstallGitHook(repoRoot!);
+    results.push({ name: "Git post-commit hook", success: gitHookSuccess });
 
-    const gitHookSuccess = await uninstallGitHook(repoRoot);
-    console.log(gitHookSuccess ? "  Git post-commit hook: removed" : "  Git post-commit hook: failed");
+    const notesPushSuccess = await removeNotesSync(repoRoot!);
+    results.push({ name: "Notes auto-push", success: notesPushSuccess });
 
-    const notesPushSuccess = await removeNotesSync(repoRoot);
-    console.log(notesPushSuccess ? "  Notes auto-push: removed" : "  Notes auto-push: failed");
+    const githubActionSuccess = await uninstallGitHubAction(repoRoot!);
+    results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
   }
 
-  console.log("\nUninstall complete!");
+  // Print results
+  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log("");
+
+  for (const result of results) {
+    const icon = result.success ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+    console.log(`  ${icon} ${result.name}`);
+  }
+
+  const allSuccess = results.every((r) => r.success);
+
+  console.log("");
+  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log("");
+
+  if (allSuccess) {
+    console.log("  \x1b[32m✓\x1b[0m \x1b[1mUninstall complete\x1b[0m");
+  } else {
+    console.log("  \x1b[33m!\x1b[0m \x1b[1mUninstall completed with warnings\x1b[0m");
+  }
+
+  console.log("");
 }
 
 async function runBlame(args: string[]): Promise<void> {
