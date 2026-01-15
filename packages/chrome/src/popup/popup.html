@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Blame</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo-row">
+        <img src="../icons/icon48.png" alt="Agent Blame" class="logo">
+        <div class="title-block">
+          <h1>Agent Blame</h1>
+          <p class="subtitle">by Mesa.dev</p>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- Status section -->
+      <section id="status-section" class="section">
+        <div id="status-indicator" class="status">
+          <span class="status-dot"></span>
+          <span class="status-text">Checking...</span>
+        </div>
+      </section>
+
+      <!-- Token section -->
+      <section id="token-section" class="section">
+        <label for="token-input">GitHub Token</label>
+        <div class="input-group">
+          <input
+            type="password"
+            id="token-input"
+            placeholder="ghp_xxxxxxxxxxxx"
+            autocomplete="off"
+          >
+          <button id="toggle-visibility" class="icon-btn" title="Show/hide token">
+            <span class="eye-icon">👁</span>
+          </button>
+        </div>
+        <div class="button-group">
+          <button id="save-btn" class="btn primary">Save</button>
+          <button id="clear-btn" class="btn secondary">Clear</button>
+        </div>
+        <p id="token-status" class="message"></p>
+      </section>
+
+      <!-- Enable/disable toggle -->
+      <section class="section toggle-section">
+        <div class="toggle-row">
+          <span class="toggle-text">Show attribution on PRs</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="enabled-toggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Help section -->
+      <section class="section help">
+        <details>
+          <summary>How to get a token</summary>
+          <ol>
+            <li>Go to <a href="https://github.com/settings/tokens/new" target="_blank">GitHub Token Settings</a></li>
+            <li>Enter a note: "Agent Blame"</li>
+            <li>Select scope: <code>repo</code></li>
+            <li>Click "Generate token"</li>
+            <li>Copy and paste here</li>
+          </ol>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <a href="https://github.com/mesa-dot-dev/agentblame" target="_blank">Documentation</a>
+      <span class="version">v0.1.2</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

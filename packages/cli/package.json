@@ -1,0 +1,49 @@
+{
+  "name": "@mesadev/agentblame",
+  "version": "0.1.5",
+  "description": "CLI to track AI-generated vs human-written code",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mesa-dot-dev/agentblame",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/mesa-dot-dev/agentblame#readme",
+  "keywords": [
+    "ai",
+    "attribution",
+    "git",
+    "blame",
+    "cursor",
+    "claude",
+    "copilot"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agentblame": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "bun run build && bun run dist/index.js"
+  },
+  "dependencies": {
+    "diff": "^8.0.2"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/node": "^20.11.30",
+    "bun-types": "^1.3.6",
+    "typescript": "^5.5.4"
+  }
+}

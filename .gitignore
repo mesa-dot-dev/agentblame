@@ -1,0 +1,51 @@
+# Build output
+out/
+packages/cli/dist/
+packages/chrome/dist/
+*.vsix
+
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+*.iml
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Local database
+*.db
+*.sqlite
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Bun
+bun.lockb
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+agentblame-chrome.zip

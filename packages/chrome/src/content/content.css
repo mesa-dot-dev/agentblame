@@ -1,0 +1,257 @@
+/* Agent Blame Content Script Styles */
+
+/* Attribution gutter colors */
+:root {
+  --ab-ai-color: #A93000;      /* Mesa Orange */
+  --ab-human-color: #22C55E;   /* Green */
+}
+
+/* Attribution gutter - box-shadow on the new line number cell */
+/* Placed on left edge of the second line number column */
+
+/* AI-generated lines - orange gutter */
+.ab-gutter-ai {
+  box-shadow: inset 4px 0 0 0 var(--ab-ai-color) !important;
+  cursor: help;
+}
+
+/* Human-written lines - green gutter */
+.ab-gutter-human {
+  box-shadow: inset 4px 0 0 0 var(--ab-human-color) !important;
+  cursor: help;
+}
+
+/* PR summary banner - compact design with Mesa orange accent */
+.ab-pr-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 16px;
+  margin: 12px 0;
+  background: var(--bgColor-default, var(--color-canvas-default, #ffffff));
+  border: 1px solid rgba(169, 48, 0, 0.25);
+  border-left: 3px solid var(--ab-ai-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.ab-pr-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ab-pr-summary-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.ab-pr-summary-icon {
+  font-size: 16px;
+}
+
+.ab-pr-summary-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fgColor-default, var(--color-fg-default, #24292f));
+}
+
+.ab-pr-summary-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.ab-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 12px;
+  min-width: 60px;
+}
+
+.ab-stat-value-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ab-stat-icon {
+  font-size: 12px;
+}
+
+.ab-stat-label {
+  color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ab-stat-value {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fgColor-default, var(--color-fg-default, #24292f));
+}
+
+.ab-stat-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--borderColor-default, var(--color-border-default, #d0d7de));
+}
+
+.ab-stat-ai .ab-stat-value {
+  color: var(--fgColor-accent, var(--color-accent-fg, #0969da));
+}
+
+.ab-stat-human .ab-stat-value {
+  color: var(--fgColor-success, var(--color-success-fg, #1a7f37));
+}
+
+.ab-stat-percent .ab-stat-percent-value {
+  font-size: 14px;
+  color: var(--fgColor-default, var(--color-fg-default, #24292f));
+}
+
+.ab-stat-percent.high-ai .ab-stat-percent-value {
+  color: var(--fgColor-attention, var(--color-attention-fg, #9a6700));
+}
+
+/* File header badge */
+.ab-file-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  background: var(--bgColor-accent-muted, var(--color-accent-subtle, #ddf4ff));
+  color: var(--fgColor-accent, var(--color-accent-fg, #0969da));
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 12px;
+}
+
+.ab-file-badge.high-ai {
+  background: var(
+    --bgColor-attention-muted,
+    var(--color-attention-subtle, #fff8c5)
+  );
+  color: var(--fgColor-attention, var(--color-attention-fg, #9a6700));
+}
+
+/* Loading state */
+.ab-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
+  font-size: 13px;
+}
+
+.ab-loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid
+    var(--borderColor-default, var(--color-border-default, #d0d7de));
+  border-top-color: var(--fgColor-accent, var(--color-accent-fg, #0969da));
+  border-radius: 50%;
+  animation: ab-spin 0.8s linear infinite;
+}
+
+@keyframes ab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Error state */
+.ab-error {
+  padding: 8px 12px;
+  background: var(--bgColor-danger-muted, var(--color-danger-subtle, #ffebe9));
+  border: 1px solid var(--borderColor-danger-muted, #ff818266);
+  border-radius: 6px;
+  color: var(--fgColor-danger, var(--color-danger-fg, #cf222e));
+  font-size: 13px;
+}
+
+/* No attribution state */
+.ab-no-data {
+  padding: 8px 12px;
+  color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* Fallback dark mode for browsers/contexts without GitHub's CSS vars */
+@media (prefers-color-scheme: dark) {
+  .ab-pr-summary {
+    background: var(--bgColor-default, #0d1117);
+    border-color: rgba(169, 48, 0, 0.4);
+    border-left-color: var(--ab-ai-color);
+  }
+
+  .ab-pr-summary-title {
+    color: var(--fgColor-default, #c9d1d9);
+  }
+
+  .ab-stat-label {
+    color: var(--fgColor-muted, #8b949e);
+  }
+
+  .ab-stat-value {
+    color: var(--fgColor-default, #c9d1d9);
+  }
+
+  .ab-stat-divider {
+    background: var(--borderColor-default, #30363d);
+  }
+
+  .ab-stat-ai .ab-stat-value {
+    color: var(--fgColor-accent, #58a6ff);
+  }
+
+  .ab-stat-human .ab-stat-value {
+    color: var(--fgColor-success, #3fb950);
+  }
+
+  .ab-stat-percent .ab-stat-percent-value {
+    color: var(--fgColor-default, #c9d1d9);
+  }
+
+  .ab-stat-percent.high-ai .ab-stat-percent-value {
+    color: var(--fgColor-attention, #d29922);
+  }
+
+  .ab-file-badge {
+    background: var(--bgColor-accent-muted, #388bfd26);
+    color: var(--fgColor-accent, #58a6ff);
+  }
+
+  .ab-file-badge.high-ai {
+    background: var(--bgColor-attention-muted, #bb800926);
+    color: var(--fgColor-attention, #d29922);
+  }
+
+  .ab-loading {
+    color: var(--fgColor-muted, #8b949e);
+  }
+
+  .ab-loading-spinner {
+    border-color: var(--borderColor-default, #30363d);
+    border-top-color: var(--fgColor-accent, #58a6ff);
+  }
+
+  .ab-error {
+    background: var(--bgColor-danger-muted, #490202);
+    border-color: #f8514966;
+    color: var(--fgColor-danger, #f85149);
+  }
+
+  .ab-no-data {
+    color: var(--fgColor-muted, #8b949e);
+  }
+}

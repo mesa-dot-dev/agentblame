@@ -1,0 +1,46 @@
+{
+  "name": "agentblame",
+  "displayName": "Agent Blame",
+  "description": "Track AI-generated vs human-written code. Provides git notes storage, CLI, and GitHub PR attribution.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mesa-dot-dev/agentblame"
+  },
+  "workspaces": [
+    "packages/cli",
+    "packages/chrome"
+  ],
+  "scripts": {
+    "build": "bun run build:cli && bun run build:chrome",
+    "build:cli": "cd packages/cli && bun run build",
+    "build:chrome": "cd packages/chrome && bun run build",
+    "clean": "rm -rf packages/*/dist packages/*/out",
+    "test": "bun test",
+    "lint": "biome lint packages/",
+    "lint:fix": "biome lint --write packages/",
+    "fmt": "biome format --write packages/",
+    "fmt:check": "biome format packages/",
+    "ab": "bun run packages/cli/src/index.ts",
+    "ab:blame": "bun run packages/cli/src/index.ts blame",
+    "ab:sync": "bun run packages/cli/src/index.ts sync",
+    "ab:status": "bun run packages/cli/src/index.ts status",
+    "ab:transfer-notes": "bun run packages/cli/src/transfer-notes.ts",
+    "ab:capture": "bun run packages/cli/src/capture.ts",
+    "cleanup": "bun run packages/cli/src/cleanup.ts",
+    "logs:clear": "rm -f ~/.agentblame/logs/*.log && echo 'Logs cleared.'"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.10",
+    "@types/chrome": "^0.0.287",
+    "@types/diff": "^8.0.0",
+    "@types/node": "^20.11.30",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "diff": "^8.0.2"
+  }
+}

@@ -1,0 +1,45 @@
+name: Agent Blame
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  transfer-notes:
+    # Only run if the PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # Needed to push notes
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for notes and blame
+          ref: ${{ github.event.pull_request.base.ref }}  # Checkout target branch (e.g., main)
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Fetch attribution notes
+        run: |
+          git fetch origin refs/notes/ab:refs/notes/ab 2>/dev/null || echo "No existing notes"
+
+      - name: Transfer notes if needed
+        run: bun run packages/action/src/transfer-notes.ts
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Push notes
+        run: |
+          git push origin refs/notes/ab 2>/dev/null || echo "No notes to push"
