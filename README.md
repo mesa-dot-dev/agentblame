@@ -11,7 +11,7 @@
 [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
 <br>
 
-<img src="docs/chrome-pr.png" alt="Agent Blame showing AI attribution on a GitHub PR" width="700">
+<img src="docs/github-view.png" alt="Agent Blame showing AI attribution on a GitHub PR" width="700">
 
 <sub>Orange markers highlight AI-generated lines in GitHub PRs</sub>
 
