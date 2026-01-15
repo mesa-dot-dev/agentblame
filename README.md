@@ -8,6 +8,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/2vvEJFrCHV)
 
+[Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
 <br>
 
 <img src="docs/chrome-pr.png" alt="Agent Blame showing AI attribution on a GitHub PR" width="700">
@@ -15,8 +16,6 @@
 <sub>Orange markers highlight AI-generated lines in GitHub PRs</sub>
 
 <br>
-
-[Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
 
 </div>
 
