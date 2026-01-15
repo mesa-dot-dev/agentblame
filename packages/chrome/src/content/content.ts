@@ -13,7 +13,6 @@ import {
   getFilePath,
   getAddedLines,
   injectMarker,
-  injectHumanMarker,
   removeAllMarkers,
   injectPRSummary,
   injectFileBadge,
@@ -188,9 +187,6 @@ async function processPage(): Promise<void> {
           injectMarker(line.element, attr);
           fileAiLines++;
           aiGeneratedLines++;
-        } else {
-          // Mark as human-written
-          injectHumanMarker(line.element);
         }
       }
 

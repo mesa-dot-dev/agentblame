@@ -365,13 +365,12 @@ function findNewLineNumberCell(element: HTMLElement): HTMLElement | null {
 }
 
 /**
- * Check if a line already has an attribution gutter
+ * Check if a line already has an AI attribution gutter
  */
 export function hasMarker(element: HTMLElement): boolean {
   const lineNumCell = findNewLineNumberCell(element);
   if (!lineNumCell) return false;
-  return lineNumCell.classList.contains("ab-gutter-ai") ||
-         lineNumCell.classList.contains("ab-gutter-human");
+  return lineNumCell.classList.contains("ab-gutter-ai");
 }
 
 /**
@@ -396,34 +395,13 @@ export function injectMarker(
 }
 
 /**
- * Inject human attribution gutter into a line (on new line number cell)
- */
-export function injectHumanMarker(element: HTMLElement): void {
-  if (hasMarker(element)) {
-    return;
-  }
-
-  const lineNumCell = findNewLineNumberCell(element);
-  if (lineNumCell) {
-    lineNumCell.classList.add("ab-gutter-human");
-    lineNumCell.setAttribute("title", "Human Written");
-  }
-}
-
-/**
- * Remove all attribution markers from the page
+ * Remove all AI attribution markers from the page
  */
 export function removeAllMarkers(): void {
-  // Remove gutter classes and titles from line number cells
+  // Remove AI gutter classes and titles from line number cells
   const aiGutters = document.querySelectorAll(".ab-gutter-ai");
   aiGutters.forEach((el) => {
     el.classList.remove("ab-gutter-ai");
-    el.removeAttribute("title");
-  });
-
-  const humanGutters = document.querySelectorAll(".ab-gutter-human");
-  humanGutters.forEach((el) => {
-    el.classList.remove("ab-gutter-human");
     el.removeAttribute("title");
   });
 

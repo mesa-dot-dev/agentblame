@@ -3,21 +3,15 @@
 /* Attribution gutter colors */
 :root {
   --ab-ai-color: #A93000;      /* Mesa Orange */
-  --ab-human-color: #22C55E;   /* Green */
 }
 
 /* Attribution gutter - box-shadow on the new line number cell */
 /* Placed on left edge of the second line number column */
+/* Only AI-generated lines are marked - human lines have no marker (cleaner UI) */
 
 /* AI-generated lines - orange gutter */
 .ab-gutter-ai {
   box-shadow: inset 4px 0 0 0 var(--ab-ai-color) !important;
-  cursor: help;
-}
-
-/* Human-written lines - green gutter */
-.ab-gutter-human {
-  box-shadow: inset 4px 0 0 0 var(--ab-human-color) !important;
   cursor: help;
 }
 

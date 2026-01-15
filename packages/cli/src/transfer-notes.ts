@@ -87,7 +87,7 @@ function getPRCommits(): string[] {
  * Read agentblame note from a commit
  */
 function readNote(sha: string): GitNotesAttribution | null {
-  const note = run(`git notes --ref=ab show ${sha} 2>/dev/null`);
+  const note = run(`git notes --ref=refs/notes/agentblame show ${sha} 2>/dev/null`);
   if (!note) return null;
   try {
     return JSON.parse(note);
@@ -105,7 +105,7 @@ function writeNote(sha: string, attribution: GitNotesAttribution): boolean {
     // Use spawnSync with array args to avoid shell injection
     const result = spawnSync(
       "git",
-      ["notes", "--ref=ab", "add", "-f", "-m", noteJson, sha],
+      ["notes", "--ref=refs/notes/agentblame", "add", "-f", "-m", noteJson, sha],
       { encoding: "utf8" },
     );
     if (result.status !== 0) {

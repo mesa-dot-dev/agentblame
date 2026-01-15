@@ -473,3 +473,100 @@ export async function uninstallClaudeHooks(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * GitHub Actions workflow content for handling squash/rebase merges
+ */
+const GITHUB_WORKFLOW_CONTENT = `name: Agent Blame
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  transfer-notes:
+    # Only run if the PR was merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: \${{ github.event.pull_request.base.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install agentblame
+        run: npm install -g @mesadev/agentblame
+
+      - name: Fetch PR head and notes
+        run: |
+          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing notes"
+          git fetch origin refs/pull/\${{ github.event.pull_request.number }}/head:refs/pull/\${{ github.event.pull_request.number }}/head
+
+      - name: Transfer notes
+        env:
+          PR_NUMBER: \${{ github.event.pull_request.number }}
+          PR_TITLE: \${{ github.event.pull_request.title }}
+          BASE_REF: \${{ github.event.pull_request.base.ref }}
+          BASE_SHA: \${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: \${{ github.event.pull_request.merge_commit_sha }}
+        run: bun \$(npm root -g)/@mesadev/agentblame/dist/transfer-notes.js
+
+      - name: Push notes
+        run: |
+          git push origin refs/notes/agentblame 2>/dev/null || echo "No notes to push"
+`;
+
+/**
+ * Install GitHub Actions workflow for handling squash/rebase merges
+ */
+export async function installGitHubAction(repoRoot: string): Promise<boolean> {
+  const workflowDir = path.join(repoRoot, ".github", "workflows");
+  const workflowPath = path.join(workflowDir, "agentblame.yml");
+
+  try {
+    // Check if workflow already exists
+    if (fs.existsSync(workflowPath)) {
+      const existing = await fs.promises.readFile(workflowPath, "utf8");
+      if (existing.includes("Agent Blame") || existing.includes("agentblame")) {
+        return true; // Already installed
+      }
+    }
+
+    // Create workflows directory if it doesn't exist
+    await fs.promises.mkdir(workflowDir, { recursive: true });
+
+    // Write the workflow file
+    await fs.promises.writeFile(workflowPath, GITHUB_WORKFLOW_CONTENT, "utf8");
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install GitHub Action:", err);
+    return false;
+  }
+}
+
+/**
+ * Uninstall GitHub Actions workflow
+ */
+export async function uninstallGitHubAction(repoRoot: string): Promise<boolean> {
+  const workflowPath = path.join(repoRoot, ".github", "workflows", "agentblame.yml");
+
+  try {
+    if (fs.existsSync(workflowPath)) {
+      await fs.promises.unlink(workflowPath);
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall GitHub Action:", err);
+    return false;
+  }
+}
