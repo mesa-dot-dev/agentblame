@@ -75,8 +75,8 @@ async function main(): Promise<void> {
     case "status":
       await runStatus();
       break;
-    case "cleanup":
-      await runCleanup();
+    case "prune":
+      await runPrune();
       break;
     case "--help":
     case "-h":
@@ -104,7 +104,7 @@ Usage:
   agentblame blame --json      Output as JSON
   agentblame status            Show pending AI edits
   agentblame sync              Transfer notes after squash/rebase
-  agentblame cleanup           Remove old entries from database
+  agentblame prune             Remove old entries from database
 
 Examples:
   agentblame init
@@ -470,7 +470,7 @@ async function runStatus(): Promise<void> {
   console.log("");
 }
 
-async function runCleanup(): Promise<void> {
+async function runPrune(): Promise<void> {
   // Find repo root and set database directory
   const repoRoot = await getRepoRoot(process.cwd());
   if (!repoRoot) {
@@ -481,13 +481,13 @@ async function runCleanup(): Promise<void> {
   const agentblameDir = getAgentBlameDirForRepo(repoRoot);
   setAgentBlameDir(agentblameDir);
 
-  console.log("\nAgent Blame Cleanup\n");
+  console.log("\nAgent Blame Prune\n");
 
   const result = cleanupOldEntries();
 
   console.log(`  Removed: ${result.removed} old entries`);
   console.log(`  Kept: ${result.kept} entries`);
-  console.log("\nCleanup complete!");
+  console.log("\nPrune complete!");
 }
 
 main().catch((err) => {

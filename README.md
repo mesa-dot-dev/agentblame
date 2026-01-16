@@ -166,7 +166,7 @@ agentblame blame src/auth.ts
 | `agentblame blame --json` | Output as JSON |
 | `agentblame status` | Show pending AI edits |
 | `agentblame sync` | Manually transfer notes after squash/rebase |
-| `agentblame cleanup` | Remove old database entries |
+| `agentblame prune` | Remove old database entries |
 
 ---
 
