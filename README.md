@@ -160,7 +160,7 @@ agentblame blame src/auth.ts
 | Command | Description |
 |---------|-------------|
 | `agentblame init` | Set up hooks and GitHub Actions workflow (current repo) |
-| `agentblame uninstall` | Remove hooks and workflow |
+| `agentblame clean` | Remove hooks and workflow from current repo |
 | `agentblame blame <file>` | Show AI attribution for a file |
 | `agentblame blame --summary` | Show summary only |
 | `agentblame blame --json` | Output as JSON |
