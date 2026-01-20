@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agent Blame",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "See AI-generated vs human-written code on GitHub PRs",
   "icons": {
     "16": "icons/icon16.png",
@@ -21,23 +21,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://github.com/*/*/pull/*"],
-      "js": ["content/content.js"],
-      "css": ["content/content.css"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://github.com/*/*/pulse",
-        "https://github.com/*/*/pulse/*",
-        "https://github.com/*/*/graphs/*",
-        "https://github.com/*/*/community",
-        "https://github.com/*/*/network",
-        "https://github.com/*/*/network/*",
-        "https://github.com/*/*/forks"
-      ],
-      "js": ["content/analytics-entry.js"],
-      "css": ["content/chart.css"],
+      "matches": ["https://github.com/*/*"],
+      "js": ["content/router.js"],
+      "css": ["content/content.css", "content/chart.css"],
       "run_at": "document_idle"
     }
   ],

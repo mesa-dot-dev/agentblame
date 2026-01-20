@@ -2,7 +2,7 @@
 
 /* Attribution gutter colors */
 :root {
-  --ab-ai-color: #A93000;      /* Mesa Orange */
+  --ab-ai-color: var(--color-severe-fg, #f78166);      /* GitHub's coral orange */
 }
 
 /* Attribution gutter - box-shadow on the new line number cell */
@@ -15,7 +15,7 @@
   cursor: help;
 }
 
-/* PR summary banner - compact design with Mesa orange accent */
+/* PR summary banner - compact design with coral orange accent */
 .ab-pr-summary {
   display: flex;
   align-items: center;
@@ -24,7 +24,7 @@
   padding: 8px 16px;
   margin: 12px 0;
   background: var(--bgColor-default, var(--color-canvas-default, #ffffff));
-  border: 1px solid rgba(169, 48, 0, 0.25);
+  border: 1px solid rgba(247, 129, 102, 0.25);
   border-left: 3px solid var(--ab-ai-color);
   border-radius: 6px;
   font-size: 13px;
@@ -184,7 +184,7 @@
 @media (prefers-color-scheme: dark) {
   .ab-pr-summary {
     background: var(--bgColor-default, #0d1117);
-    border-color: rgba(169, 48, 0, 0.4);
+    border-color: rgba(247, 129, 102, 0.4);
     border-left-color: var(--ab-ai-color);
   }
 

@@ -97,112 +97,126 @@ function findInsightsSidebar(): Element | null {
 // Track repos we've already checked (to avoid repeated API calls)
 const checkedRepos = new Map<string, boolean>();
 
+// Guard against concurrent injection attempts
+let isInjecting = false;
+
 /**
  * Inject the Agent Blame sidebar item (only if analytics exist)
  */
 export async function injectSidebarItem(): Promise<void> {
-  // Check if already injected
-  if (document.getElementById(SIDEBAR_ITEM_ID)) {
+  // Check if already injected or injection in progress
+  if (document.getElementById(SIDEBAR_ITEM_ID) || isInjecting) {
     return;
   }
 
-  const context = extractRepoContext();
-  if (!context) {
-    return;
-  }
+  isInjecting = true;
 
-  const repoKey = `${context.owner}/${context.repo}`;
-
-  // Check if we've already verified this repo has no analytics
-  if (checkedRepos.has(repoKey) && !checkedRepos.get(repoKey)) {
-    console.log("[Agent Blame] Skipping - already checked, no analytics for this repo");
-    return;
-  }
-
-  // Check if analytics exist for this repo (only if not already checked)
-  if (!checkedRepos.has(repoKey)) {
-    const hasAnalytics = await checkAnalyticsExist(context.owner, context.repo);
-    checkedRepos.set(repoKey, hasAnalytics);
-
-    if (!hasAnalytics) {
-      console.log("[Agent Blame] No analytics found, not showing sidebar item");
+  try {
+    const context = extractRepoContext();
+    if (!context) {
       return;
     }
-  }
 
-  const sidebar = findInsightsSidebar();
-  if (!sidebar) {
-    console.log("[Agent Blame] Could not find Insights sidebar");
-    return;
-  }
+    const repoKey = `${context.owner}/${context.repo}`;
 
-  // Find the Pulse link to insert after
-  const pulseLink = sidebar.querySelector('a[href$="/pulse"]');
-  if (!pulseLink) {
-    console.log("[Agent Blame] Could not find Pulse link in sidebar");
-    return;
-  }
+    // Check if we've already verified this repo has no analytics
+    if (checkedRepos.has(repoKey) && !checkedRepos.get(repoKey)) {
+      console.log("[Agent Blame] Skipping - already checked, no analytics for this repo");
+      return;
+    }
 
-  // Determine the structure - is it a menu-item or just links?
-  const pulseItem = pulseLink.closest(".menu-item") || pulseLink;
-  const isMenuItem = pulseItem.classList.contains("menu-item");
+    // Check if analytics exist for this repo (only if not already checked)
+    if (!checkedRepos.has(repoKey)) {
+      const hasAnalytics = await checkAnalyticsExist(context.owner, context.repo);
+      checkedRepos.set(repoKey, hasAnalytics);
 
-  // Create the sidebar item
-  const sidebarItem = document.createElement("a");
-  sidebarItem.id = SIDEBAR_ITEM_ID;
-  sidebarItem.href = `/${context.owner}/${context.repo}/pulse#agent-blame`;
+      if (!hasAnalytics) {
+        console.log("[Agent Blame] No analytics found, not showing sidebar item");
+        return;
+      }
+    }
 
-  if (isMenuItem) {
-    // Use GitHub's menu-item styling
-    sidebarItem.className = "menu-item";
-  } else {
-    // Copy classes from Pulse link
-    sidebarItem.className = pulseLink.className;
-  }
+    // Double-check not injected (in case another call completed while we were checking analytics)
+    if (document.getElementById(SIDEBAR_ITEM_ID)) {
+      return;
+    }
 
-  sidebarItem.textContent = "Agent Blame";
+    const sidebar = findInsightsSidebar();
+    if (!sidebar) {
+      console.log("[Agent Blame] Could not find Insights sidebar");
+      return;
+    }
 
-  // Handle click - show the Agent Blame page
-  sidebarItem.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+    // Find the Pulse link to insert after
+    const pulseLink = sidebar.querySelector('a[href$="/pulse"]');
+    if (!pulseLink) {
+      console.log("[Agent Blame] Could not find Pulse link in sidebar");
+      return;
+    }
 
-    // Update URL hash
-    window.history.pushState(null, "", `/${context.owner}/${context.repo}/pulse#agent-blame`);
+    // Determine the structure - is it a menu-item or just links?
+    const pulseItem = pulseLink.closest(".menu-item") || pulseLink;
+    const isMenuItem = pulseItem.classList.contains("menu-item");
 
-    // Remove active state from other items
-    sidebar.querySelectorAll(".selected, [aria-current='page']").forEach((el) => {
-      el.classList.remove("selected");
-      el.removeAttribute("aria-current");
+    // Create the sidebar item
+    const sidebarItem = document.createElement("a");
+    sidebarItem.id = SIDEBAR_ITEM_ID;
+    sidebarItem.href = `/${context.owner}/${context.repo}/pulse#agent-blame`;
+
+    if (isMenuItem) {
+      // Use GitHub's menu-item styling
+      sidebarItem.className = "menu-item";
+    } else {
+      // Copy classes from Pulse link
+      sidebarItem.className = pulseLink.className;
+    }
+
+    sidebarItem.textContent = "Agent Blame";
+
+    // Handle click - show the Agent Blame page
+    sidebarItem.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Update URL hash
+      window.history.pushState(null, "", `/${context.owner}/${context.repo}/pulse#agent-blame`);
+
+      // Remove active state from other items
+      sidebar.querySelectorAll(".selected, [aria-current='page']").forEach((el) => {
+        el.classList.remove("selected");
+        el.removeAttribute("aria-current");
+      });
+
+      // Add active state to our item
+      sidebarItem.classList.add("selected");
+      sidebarItem.setAttribute("aria-current", "page");
+
+      // Show the Agent Blame page
+      showAnalyticsPage(context.owner, context.repo);
     });
 
-    // Add active state to our item
-    sidebarItem.classList.add("selected");
-    sidebarItem.setAttribute("aria-current", "page");
+    // Insert after Pulse
+    if (pulseItem.nextSibling) {
+      pulseItem.parentNode?.insertBefore(sidebarItem, pulseItem.nextSibling);
+    } else {
+      pulseItem.parentNode?.appendChild(sidebarItem);
+    }
 
-    // Show the Agent Blame page
-    showAnalyticsPage(context.owner, context.repo);
-  });
+    console.log("[Agent Blame] Sidebar item injected");
 
-  // Insert after Pulse
-  if (pulseItem.nextSibling) {
-    pulseItem.parentNode?.insertBefore(sidebarItem, pulseItem.nextSibling);
-  } else {
-    pulseItem.parentNode?.appendChild(sidebarItem);
-  }
-
-  console.log("[Agent Blame] Sidebar item injected");
-
-  // If URL already has #agent-blame, show the page
-  if (isAgentBlamePage()) {
-    // Remove active state from other items
-    sidebar.querySelectorAll(".selected, [aria-current='page']").forEach((el) => {
-      el.classList.remove("selected");
-      el.removeAttribute("aria-current");
-    });
-    sidebarItem.classList.add("selected");
-    sidebarItem.setAttribute("aria-current", "page");
-    showAnalyticsPage(context.owner, context.repo);
+    // If URL already has #agent-blame, show the page
+    if (isAgentBlamePage()) {
+      // Remove active state from other items
+      sidebar.querySelectorAll(".selected, [aria-current='page']").forEach((el) => {
+        el.classList.remove("selected");
+        el.removeAttribute("aria-current");
+      });
+      sidebarItem.classList.add("selected");
+      sidebarItem.setAttribute("aria-current", "page");
+      showAnalyticsPage(context.owner, context.repo);
+    }
+  } finally {
+    isInjecting = false;
   }
 }
 

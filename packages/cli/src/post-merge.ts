@@ -712,17 +712,33 @@ function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
 
 /**
  * Get PR diff stats (additions/deletions)
+ * Only counts non-empty lines to match how attributions are counted
  */
 function getPRDiffStats(): { additions: number; deletions: number } {
-  const stat = run(`git diff --shortstat ${BASE_SHA}..${MERGE_SHA || "HEAD"}`);
-  // Format: " 5 files changed, 120 insertions(+), 30 deletions(-)"
-  const addMatch = stat.match(/(\d+) insertion/);
-  const delMatch = stat.match(/(\d+) deletion/);
+  const diff = run(`git diff ${BASE_SHA}..${MERGE_SHA || "HEAD"}`);
+  if (!diff) return { additions: 0, deletions: 0 };
 
-  return {
-    additions: addMatch ? parseInt(addMatch[1], 10) : 0,
-    deletions: delMatch ? parseInt(delMatch[1], 10) : 0,
-  };
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of diff.split("\n")) {
+    // Added line (but not diff header)
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      const content = line.slice(1).trim();
+      if (content !== "") {
+        additions++;
+      }
+    }
+    // Deleted line (but not diff header)
+    else if (line.startsWith("-") && !line.startsWith("---")) {
+      const content = line.slice(1).trim();
+      if (content !== "") {
+        deletions++;
+      }
+    }
+  }
+
+  return { additions, deletions };
 }
 
 /**

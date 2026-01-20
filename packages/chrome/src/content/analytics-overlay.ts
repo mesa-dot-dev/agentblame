@@ -15,6 +15,33 @@ import {
 const PAGE_CONTAINER_ID = "agentblame-page-container";
 const ORIGINAL_CONTENT_ATTR = "data-agentblame-hidden";
 
+// Tool color palette - GitHub Primer colors that work in light/dark themes
+const TOOL_COLOR_PALETTE = [
+  "#0969da", // Blue
+  "#8250df", // Purple
+  "#bf3989", // Pink
+  "#0a3069", // Dark blue
+  "#1a7f37", // Green
+  "#9a6700", // Yellow/brown
+  "#cf222e", // Red
+  "#6e7781", // Gray
+];
+
+/**
+ * Format provider/tool name for display
+ */
+function formatProviderName(provider: string): string {
+  const names: Record<string, string> = {
+    cursor: "Cursor",
+    claudeCode: "Claude Code",
+    copilot: "Copilot",
+    windsurf: "Windsurf",
+    aider: "Aider",
+    cline: "Cline",
+  };
+  return names[provider] || provider.replace(/([A-Z])/g, " $1").trim();
+}
+
 /**
  * Show the Agent Blame analytics page
  */
@@ -330,9 +357,9 @@ function renderAnalyticsPage(
   const lastUpdated = fullAnalytics?.summary.updated || analytics.summary.updated;
 
   return `
-    <div class="mt-4">
+    <div>
       <!-- Page Header -->
-      <div class="Subhead mb-4 d-flex flex-justify-between flex-items-center">
+      <div class="Subhead d-flex flex-justify-between flex-items-center">
         <div>
           <h2 class="Subhead-heading">Agent Blame</h2>
           <div class="Subhead-description">
@@ -384,11 +411,37 @@ function renderRepositorySection(
   const claudeLines = summary.providers.claudeCode || 0;
   const humanPercent = 100 - aiPercent;
 
+  // Build provider data dynamically
+  const providerEntries = Object.entries(summary.providers)
+    .filter(([, lines]) => lines > 0)
+    .sort(([, a], [, b]) => b - a);
+  const totalProviderLines = providerEntries.reduce((sum, [, lines]) => sum + lines, 0);
+
+  // Calculate percentages and assign colors
+  const providerData = providerEntries.map(([name, lines], index) => ({
+    name: formatProviderName(name),
+    lines,
+    percent: totalProviderLines > 0 ? Math.round((lines / totalProviderLines) * 100) : 0,
+    color: TOOL_COLOR_PALETTE[index % TOOL_COLOR_PALETTE.length],
+  }));
+
+  // Build conic-gradient stops
+  let gradientStops = "";
+  let currentPercent = 0;
+  for (const provider of providerData) {
+    gradientStops += `${provider.color} ${currentPercent}% ${currentPercent + provider.percent}%, `;
+    currentPercent += provider.percent;
+  }
+  gradientStops = gradientStops.slice(0, -2); // Remove trailing comma
+
   // Get top models sorted by lines
   const modelEntries = Object.entries(summary.models).sort(
     ([, a], [, b]) => b - a
   );
-  const totalModelLines = modelEntries.reduce((sum, [, v]) => sum + v, 0);
+
+  // Colors
+  const aiColor = "var(--color-severe-fg, #f78166)"; // GitHub's coral orange
+  const humanColor = "var(--color-success-fg, #238636)"; // GitHub's addition green
 
   return `
     <div class="Box mb-4">
@@ -396,35 +449,32 @@ function renderRepositorySection(
         <h3 class="Box-title">Repository Overview</h3>
       </div>
       <div class="Box-body">
-        <!-- Stats Cards -->
-        <div class="d-flex gap-3 mb-4">
-          <!-- AI Percentage Card -->
-          <div class="flex-1 text-center p-3 rounded-2" style="background: var(--color-severe-subtle); border: 1px solid var(--color-severe-muted);">
-            <div class="f1 text-bold" style="color: var(--color-severe-fg);">${aiPercent}%</div>
-            <div class="f6 color-fg-muted">AI-written code</div>
+        <!-- Three Column Layout: Stats | Provider Pie | AI vs Human Pie -->
+        <div class="d-flex gap-4 mb-4">
+          <!-- Left: AI Stats -->
+          <div class="flex-1 text-center p-3">
+            <div style="font-size: 48px; font-weight: bold; color: ${aiColor};">${aiPercent}%</div>
+            <div class="f5 text-bold mb-1">AI-Written Code</div>
             <div class="f6 color-fg-muted">${summary.aiLines.toLocaleString()} of ${summary.totalLines.toLocaleString()} lines</div>
           </div>
-          <!-- Cursor Card -->
-          <div class="flex-1 text-center p-3 rounded-2 color-bg-subtle">
-            <div class="f2 text-bold color-fg-default">${cursorLines.toLocaleString()}</div>
-            <div class="f6 color-fg-muted">Cursor</div>
-          </div>
-          <!-- Claude Card -->
-          <div class="flex-1 text-center p-3 rounded-2 color-bg-subtle">
-            <div class="f2 text-bold color-fg-default">${claudeLines.toLocaleString()}</div>
-            <div class="f6 color-fg-muted">Claude Code</div>
-          </div>
-        </div>
 
-        <!-- AI/Human Progress Bar -->
-        <div class="mb-4">
-          <div class="d-flex flex-justify-between f6 mb-1">
-            <span style="color: var(--color-severe-fg);">AI ${aiPercent}%</span>
-            <span style="color: var(--color-success-fg);">Human ${humanPercent}%</span>
+          <!-- Middle: Provider Pie Chart -->
+          <div class="flex-1 text-center p-3">
+            <div style="width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 12px; background: conic-gradient(${gradientStops || '#6e7781 0% 100%'});"></div>
+            <div class="f5 text-bold mb-2">By Tool</div>
+            <div class="d-flex flex-justify-center flex-wrap gap-2 f6">
+              ${providerData.map(p => `<span><span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${p.color}; margin-right: 4px;"></span>${p.name} ${p.percent}%</span>`).join('')}
+            </div>
           </div>
-          <div class="d-flex rounded-2 overflow-hidden" style="height: 8px;">
-            <div style="width: ${aiPercent}%; background: var(--color-severe-fg);"></div>
-            <div style="width: ${humanPercent}%; background: var(--color-success-fg);"></div>
+
+          <!-- Right: AI vs Human Pie Chart -->
+          <div class="flex-1 text-center p-3">
+            <div style="width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 12px; background: conic-gradient(${aiColor} 0% ${aiPercent}%, ${humanColor} ${aiPercent}% 100%);"></div>
+            <div class="f5 text-bold mb-2">AI vs Human</div>
+            <div class="d-flex flex-justify-center gap-3 f6">
+              <span><span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${aiColor}; margin-right: 4px;"></span>AI ${aiPercent}%</span>
+              <span><span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${humanColor}; margin-right: 4px;"></span>Human ${humanPercent}%</span>
+            </div>
           </div>
         </div>
 
@@ -434,25 +484,27 @@ function renderRepositorySection(
             ? `
         <div>
           <h4 class="f6 color-fg-muted mb-2">By Model</h4>
-          <div class="d-flex flex-column gap-2">
-            ${modelEntries
-              .slice(0, 5)
-              .map(([model, lines]) => {
-                const percent =
-                  totalModelLines > 0
-                    ? Math.round((lines / totalModelLines) * 100)
-                    : 0;
-                return `
-                <div class="d-flex flex-items-center gap-2">
-                  <span class="f6" style="width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(formatModelName(model))}</span>
-                  <span class="Progress flex-1" style="height: 8px;">
-                    <span class="Progress-item" style="width: ${percent}%; background: var(--color-severe-fg);"></span>
-                  </span>
-                  <span class="f6 color-fg-muted" style="width: 50px; text-align: right;">${percent}%</span>
-                </div>
-              `;
-              })
-              .join("")}
+          <div class="d-flex flex-column gap-3">
+            ${(() => {
+              const totalLines = modelEntries.reduce((sum, [, l]) => sum + l, 0);
+              return modelEntries
+                .slice(0, 10)
+                .map(([model, lines]) => {
+                  const barPercent = totalLines > 0 ? Math.round((lines / totalLines) * 100) : 0;
+                  return `
+                  <div>
+                    <div class="d-flex flex-justify-between mb-1">
+                      <span class="f6 text-bold">${escapeHtml(formatModelName(model))}</span>
+                      <span class="f6 color-fg-muted">${lines.toLocaleString()} lines</span>
+                    </div>
+                    <div class="Progress" style="height: 10px;">
+                      <span class="Progress-item" style="width: ${barPercent}%; background-color: ${aiColor};"></span>
+                    </div>
+                  </div>
+                `;
+                })
+                .join("");
+            })()}
           </div>
         </div>
         `
@@ -469,8 +521,7 @@ function renderRepositorySection(
 function renderContributorsSection(analytics: AnalyticsData): string {
   const contributors = Object.entries(analytics.contributors)
     .map(([username, stats]) => ({ username, ...stats }))
-    .sort((a, b) => b.totalLines - a.totalLines)
-    .slice(0, 10);
+    .sort((a, b) => b.totalLines - a.totalLines);
 
   if (contributors.length === 0) {
     return `
@@ -535,7 +586,7 @@ function renderPullRequestsSection(
   owner: string,
   repo: string
 ): string {
-  const recentPRs = analytics.history.slice(0, 10);
+  const recentPRs = analytics.history.slice(0, 20);
 
   if (recentPRs.length === 0) {
     return `
