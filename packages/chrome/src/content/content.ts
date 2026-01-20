@@ -42,10 +42,35 @@ function logError(..._args: unknown[]): void {
 }
 
 /**
+ * Check if current URL is a repo page (could navigate to PR)
+ */
+function isRepoPage(): boolean {
+  return /^https:\/\/github\.com\/[^/]+\/[^/]+/.test(window.location.href);
+}
+
+/**
+ * Check if current URL is a PR page
+ */
+function isPRPage(): boolean {
+  return /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(window.location.href);
+}
+
+/**
  * Initialize the content script
  */
 async function init(): Promise<void> {
   log("Content script initializing...");
+
+  // Quick exit if not on a repo page
+  if (!isRepoPage()) {
+    return;
+  }
+
+  // Only do heavy initialization if on PR page or might navigate to one
+  if (!isPRPage()) {
+    // Not on PR page yet, but set up navigation listener for when we navigate to one
+    return;
+  }
 
   // Check if enabled
   const enabled = await isEnabled();
@@ -387,14 +412,29 @@ function resetState(): void {
 }
 
 /**
+ * Handle navigation - initialize if we landed on a PR page
+ */
+function handleNavigation(): void {
+  if (isPRPage()) {
+    resetState();
+    init();
+  } else {
+    // Navigated away from PR page
+    if (wasOnFilesChangedTab) {
+      removeAllMarkers();
+    }
+    resetState();
+  }
+}
+
+/**
  * Handle URL changes (GitHub uses History API)
  */
 function setupNavigationListener(): void {
   // Listen for popstate (back/forward)
   window.addEventListener("popstate", () => {
     log("Navigation: popstate");
-    resetState();
-    setTimeout(() => processPage(), 100);
+    setTimeout(handleNavigation, 100);
   });
 
   // Override pushState and replaceState to detect navigation
@@ -404,15 +444,13 @@ function setupNavigationListener(): void {
   history.pushState = (...args) => {
     originalPushState(...args);
     log("Navigation: pushState");
-    resetState();
-    setTimeout(() => processPage(), 100);
+    setTimeout(handleNavigation, 100);
   };
 
   history.replaceState = (...args) => {
     originalReplaceState(...args);
     log("Navigation: replaceState");
-    resetState();
-    setTimeout(() => processPage(), 100);
+    setTimeout(handleNavigation, 100);
   };
 }
 

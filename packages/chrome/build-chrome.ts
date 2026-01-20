@@ -71,29 +71,17 @@ async function bundle(): Promise<void> {
   });
   console.log("✓ Bundled popup.js");
 
-  // Bundle content script
+  // Bundle unified content script router
   await build({
-    entryPoints: [join(SRC_DIR, "content", "content.ts")],
+    entryPoints: [join(SRC_DIR, "content", "router.ts")],
     bundle: true,
-    outfile: join(DIST_DIR, "content", "content.js"),
+    outfile: join(DIST_DIR, "content", "router.js"),
     format: "iife",
     target: "chrome100",
     minify: false,
     sourcemap: true,
   });
-  console.log("✓ Bundled content.js");
-
-  // Bundle analytics entry script (for repo pages)
-  await build({
-    entryPoints: [join(SRC_DIR, "content", "analytics-entry.ts")],
-    bundle: true,
-    outfile: join(DIST_DIR, "content", "analytics-entry.js"),
-    format: "iife",
-    target: "chrome100",
-    minify: false,
-    sourcemap: true,
-  });
-  console.log("✓ Bundled analytics-entry.js");
+  console.log("✓ Bundled router.js");
 
   // Bundle background service worker
   await build({

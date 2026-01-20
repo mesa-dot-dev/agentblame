@@ -2,7 +2,7 @@
   "name": "agentblame",
   "displayName": "Agent Blame",
   "description": "Track AI-generated vs human-written code. Provides git notes storage, CLI, and GitHub PR attribution.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
