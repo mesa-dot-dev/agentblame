@@ -12,60 +12,42 @@ import {
   handleHashChange,
 } from "./analytics-tab";
 
-let observer: MutationObserver | null = null;
+// Track if we've already set up listeners (avoid duplicates)
+let listenersInitialized = false;
+
+/**
+ * Check if current URL could navigate to insights pages
+ * (i.e., we're on a repo page)
+ */
+function isRepoPage(): boolean {
+  // Match: github.com/owner/repo or github.com/owner/repo/*
+  return /^https:\/\/github\.com\/[^/]+\/[^/]+/.test(window.location.href);
+}
 
 /**
  * Initialize analytics sidebar injection
  */
 function init(): void {
-  console.log("[Agent Blame] Analytics entry loaded on:", window.location.href);
-  console.log("[Agent Blame] isInsightsPage:", isInsightsPage());
+  // Quick exit if not on a repo page - no setup needed
+  if (!isRepoPage()) {
+    return;
+  }
 
+  // Only set up listeners once
+  if (listenersInitialized) {
+    return;
+  }
+  listenersInitialized = true;
+
+  // On insights page - inject immediately
   if (isInsightsPage()) {
-    // Wait a bit for GitHub to fully render the page
-    setTimeout(() => {
-      console.log("[Agent Blame] Injecting sidebar item...");
-      injectSidebarItem();
-    }, 500);
+    setTimeout(() => injectSidebarItem(), 500);
   }
 
-  // Watch for DOM changes (GitHub uses dynamic rendering)
-  setupObserver();
-
-  // Handle hash changes for navigation
+  // Lightweight setup - only what's needed for navigation detection
+  setupHistoryListener();
   setupHashListener();
-
-  // Handle GitHub's Turbo navigation
   setupTurboListener();
-}
-
-/**
- * Setup MutationObserver for dynamic content
- */
-function setupObserver(): void {
-  if (observer) {
-    observer.disconnect();
-  }
-
-  observer = new MutationObserver(() => {
-    if (isInsightsPage()) {
-      injectSidebarItem();
-    } else {
-      removeSidebarItem();
-    }
-  });
-
-  // Observe the sidebar area for changes
-  const sidebar = document.querySelector(".Layout-sidebar");
-  if (sidebar) {
-    observer.observe(sidebar, { childList: true, subtree: true });
-  }
-
-  // Also observe body for major page changes
-  observer.observe(document.body, {
-    childList: true,
-    subtree: false,
-  });
 }
 
 /**
@@ -73,14 +55,12 @@ function setupObserver(): void {
  */
 function setupHashListener(): void {
   window.addEventListener("hashchange", () => {
-    console.log("[Agent Blame] Hash changed to:", window.location.hash);
     handleHashChange();
   });
 
-  // Also handle popstate for back/forward
+  // Handle popstate for back/forward
   window.addEventListener("popstate", () => {
-    console.log("[Agent Blame] Popstate - hash:", window.location.hash);
-    handleHashChange();
+    handleNavigation();
   });
 }
 
@@ -91,25 +71,51 @@ function setupTurboListener(): void {
   // Turbo Drive fires these events on navigation
   document.addEventListener("turbo:load", () => {
     console.log("[Agent Blame] Turbo load");
-    if (isInsightsPage()) {
-      setTimeout(() => injectSidebarItem(), 100);
-    }
+    handleNavigation();
   });
 
   document.addEventListener("turbo:render", () => {
     console.log("[Agent Blame] Turbo render");
-    if (isInsightsPage()) {
-      setTimeout(() => injectSidebarItem(), 100);
-    }
+    handleNavigation();
   });
 
   // Also handle the older pjax events (some GitHub pages still use these)
   document.addEventListener("pjax:end", () => {
     console.log("[Agent Blame] PJAX end");
-    if (isInsightsPage()) {
-      setTimeout(() => injectSidebarItem(), 100);
-    }
+    handleNavigation();
   });
+}
+
+/**
+ * Handle navigation by intercepting History API
+ */
+function setupHistoryListener(): void {
+  // Intercept pushState
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = (...args) => {
+    originalPushState(...args);
+    console.log("[Agent Blame] pushState:", window.location.href);
+    setTimeout(handleNavigation, 100);
+  };
+
+  // Intercept replaceState
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = (...args) => {
+    originalReplaceState(...args);
+    console.log("[Agent Blame] replaceState:", window.location.href);
+    setTimeout(handleNavigation, 100);
+  };
+}
+
+/**
+ * Handle navigation - inject or remove sidebar item based on current page
+ */
+function handleNavigation(): void {
+  if (isInsightsPage()) {
+    setTimeout(() => injectSidebarItem(), 200);
+  } else {
+    removeSidebarItem();
+  }
 }
 
 // Initialize when DOM is ready
