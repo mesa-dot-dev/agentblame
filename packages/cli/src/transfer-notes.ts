@@ -15,7 +15,15 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import type { GitNotesAttribution } from "./lib";
+import type {
+  GitNotesAttribution,
+  AnalyticsNote,
+  PRHistoryEntry,
+  ProviderBreakdown,
+  ModelBreakdown,
+  ContributorStats,
+  AiProvider,
+} from "./lib";
 
 // Get environment variables
 const PR_NUMBER = process.env.PR_NUMBER || "";
@@ -23,6 +31,12 @@ const PR_TITLE = process.env.PR_TITLE || "";
 const BASE_SHA = process.env.BASE_SHA || "";
 const HEAD_SHA = process.env.HEAD_SHA || "";
 const MERGE_SHA = process.env.MERGE_SHA || "";
+const PR_AUTHOR = process.env.PR_AUTHOR || "unknown";
+
+// Analytics notes ref (separate from attribution notes)
+const ANALYTICS_REF = "refs/notes/agentblame-analytics";
+// We store analytics on the repo's first commit (root)
+const ANALYTICS_ANCHOR = "agentblame-analytics-anchor";
 
 type MergeType = "merge_commit" | "squash" | "rebase";
 
@@ -493,6 +507,339 @@ function handleRebaseMerge(prCommits: string[]): void {
   );
 }
 
+// =============================================================================
+// Analytics Aggregation
+// =============================================================================
+
+/**
+ * Get the root commit SHA (first commit in repo)
+ */
+function getRootCommit(): string {
+  return run("git rev-list --max-parents=0 HEAD").split("\n")[0] || "";
+}
+
+/**
+ * Get or create the analytics anchor tag
+ * Returns the SHA the tag points to (root commit)
+ */
+function getOrCreateAnalyticsAnchor(): string {
+  // Check if tag exists
+  const existingTag = run(`git rev-parse ${ANALYTICS_ANCHOR} 2>/dev/null`);
+  if (existingTag) {
+    return existingTag;
+  }
+
+  // Create tag on root commit
+  const rootSha = getRootCommit();
+  if (!rootSha) {
+    log("Warning: Could not find root commit for analytics anchor");
+    return "";
+  }
+
+  const result = spawnSync(
+    "git",
+    ["tag", ANALYTICS_ANCHOR, rootSha],
+    { encoding: "utf8" },
+  );
+
+  if (result.status !== 0) {
+    log(`Warning: Could not create analytics anchor tag: ${result.stderr}`);
+    return "";
+  }
+
+  log(`Created analytics anchor tag at ${rootSha.slice(0, 7)}`);
+  return rootSha;
+}
+
+/**
+ * Read existing analytics note
+ */
+function readAnalyticsNote(): AnalyticsNote | null {
+  const anchorSha = getOrCreateAnalyticsAnchor();
+  if (!anchorSha) return null;
+
+  const note = run(
+    `git notes --ref=${ANALYTICS_REF} show ${anchorSha} 2>/dev/null`,
+  );
+  if (!note) return null;
+
+  try {
+    const parsed = JSON.parse(note);
+    if (parsed.version === 2) {
+      return parsed as AnalyticsNote;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write analytics note
+ */
+function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
+  const anchorSha = getOrCreateAnalyticsAnchor();
+  if (!anchorSha) return false;
+
+  const noteJson = JSON.stringify(analytics);
+  const result = spawnSync(
+    "git",
+    ["notes", `--ref=${ANALYTICS_REF}`, "add", "-f", "-m", noteJson, anchorSha],
+    { encoding: "utf8" },
+  );
+
+  if (result.status !== 0) {
+    log(`Failed to write analytics note: ${result.stderr}`);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Get PR diff stats (additions/deletions)
+ */
+function getPRDiffStats(): { additions: number; deletions: number } {
+  const stat = run(`git diff --shortstat ${BASE_SHA}..${MERGE_SHA || "HEAD"}`);
+  // Format: " 5 files changed, 120 insertions(+), 30 deletions(-)"
+  const addMatch = stat.match(/(\d+) insertion/);
+  const delMatch = stat.match(/(\d+) deletion/);
+
+  return {
+    additions: addMatch ? parseInt(addMatch[1], 10) : 0,
+    deletions: delMatch ? parseInt(delMatch[1], 10) : 0,
+  };
+}
+
+/**
+ * Aggregate PR statistics from attribution notes
+ */
+function aggregatePRStats(
+  attributions: NoteAttribution[],
+): {
+  aiLines: number;
+  byProvider: ProviderBreakdown;
+  byModel: ModelBreakdown;
+} {
+  let aiLines = 0;
+  const byProvider: ProviderBreakdown = {};
+  const byModel: ModelBreakdown = {};
+
+  for (const attr of attributions) {
+    const lineCount = attr.end_line - attr.start_line + 1;
+    aiLines += lineCount;
+
+    // Aggregate by provider
+    const provider = attr.provider as AiProvider;
+    byProvider[provider] = (byProvider[provider] || 0) + lineCount;
+
+    // Aggregate by model
+    if (attr.model) {
+      byModel[attr.model] = (byModel[attr.model] || 0) + lineCount;
+    }
+  }
+
+  return { aiLines, byProvider, byModel };
+}
+
+/**
+ * Merge provider breakdowns
+ */
+function mergeProviders(
+  a: ProviderBreakdown,
+  b: ProviderBreakdown,
+): ProviderBreakdown {
+  const result: ProviderBreakdown = { ...a };
+  for (const [key, value] of Object.entries(b)) {
+    const k = key as keyof ProviderBreakdown;
+    result[k] = (result[k] || 0) + (value || 0);
+  }
+  return result;
+}
+
+/**
+ * Merge model breakdowns
+ */
+function mergeModels(a: ModelBreakdown, b: ModelBreakdown): ModelBreakdown {
+  const result: ModelBreakdown = { ...a };
+  for (const [key, value] of Object.entries(b)) {
+    result[key] = (result[key] || 0) + value;
+  }
+  return result;
+}
+
+/**
+ * Update analytics with current PR data
+ */
+function updateAnalytics(
+  existing: AnalyticsNote | null,
+  prAttributions: NoteAttribution[],
+): AnalyticsNote {
+  const prStats = aggregatePRStats(prAttributions);
+  const diffStats = getPRDiffStats();
+  const now = new Date().toISOString();
+  const today = now.split("T")[0];
+
+  // Create history entry for this PR
+  const historyEntry: PRHistoryEntry = {
+    d: today,
+    pr: parseInt(PR_NUMBER, 10) || 0,
+    t: PR_TITLE.slice(0, 100), // Truncate long titles
+    author: PR_AUTHOR,
+    a: diffStats.additions,
+    r: diffStats.deletions,
+    ai: prStats.aiLines,
+    p: Object.keys(prStats.byProvider).length > 0 ? prStats.byProvider : undefined,
+    m: Object.keys(prStats.byModel).length > 0 ? prStats.byModel : undefined,
+  };
+
+  if (existing) {
+    // Update existing analytics
+    const newSummary = {
+      total_lines: existing.summary.total_lines + diffStats.additions,
+      ai_lines: existing.summary.ai_lines + prStats.aiLines,
+      human_lines:
+        existing.summary.human_lines +
+        (diffStats.additions - prStats.aiLines),
+      by_provider: mergeProviders(
+        existing.summary.by_provider,
+        prStats.byProvider,
+      ),
+      by_model: mergeModels(existing.summary.by_model, prStats.byModel),
+      last_updated: now,
+    };
+
+    // Update contributor stats
+    const contributors = { ...existing.contributors };
+    if (!contributors[PR_AUTHOR]) {
+      contributors[PR_AUTHOR] = {
+        total_lines: 0,
+        ai_lines: 0,
+        by_provider: {},
+        by_model: {},
+        pr_count: 0,
+      };
+    }
+    const authorStats = contributors[PR_AUTHOR];
+    authorStats.total_lines += diffStats.additions;
+    authorStats.ai_lines += prStats.aiLines;
+    authorStats.by_provider = mergeProviders(
+      authorStats.by_provider,
+      prStats.byProvider,
+    );
+    authorStats.by_model = mergeModels(authorStats.by_model, prStats.byModel);
+    authorStats.pr_count += 1;
+
+    // Add to history (keep last 100 PRs)
+    const history = [historyEntry, ...existing.history].slice(0, 100);
+
+    return {
+      version: 2,
+      summary: newSummary,
+      contributors,
+      history,
+    };
+  }
+
+  // Create new analytics
+  const contributors: Record<string, ContributorStats> = {
+    [PR_AUTHOR]: {
+      total_lines: diffStats.additions,
+      ai_lines: prStats.aiLines,
+      by_provider: prStats.byProvider,
+      by_model: prStats.byModel,
+      pr_count: 1,
+    },
+  };
+
+  return {
+    version: 2,
+    summary: {
+      total_lines: diffStats.additions,
+      ai_lines: prStats.aiLines,
+      human_lines: diffStats.additions - prStats.aiLines,
+      by_provider: prStats.byProvider,
+      by_model: prStats.byModel,
+      last_updated: now,
+    },
+    contributors,
+    history: [historyEntry],
+  };
+}
+
+/**
+ * Collect all attributions from the merge result
+ */
+function collectMergeAttributions(mergeType: MergeType): NoteAttribution[] {
+  if (mergeType === "merge_commit") {
+    // For merge commits, notes survive on original commits
+    // Collect from all PR commits
+    const prCommits = getPRCommits();
+    const allAttributions: NoteAttribution[] = [];
+    for (const sha of prCommits) {
+      const note = readNote(sha);
+      if (note?.attributions) {
+        allAttributions.push(...note.attributions);
+      }
+    }
+    return allAttributions;
+  }
+
+  // For squash/rebase, read from the merge commit(s)
+  if (mergeType === "squash" && MERGE_SHA) {
+    const note = readNote(MERGE_SHA);
+    return note?.attributions || [];
+  }
+
+  if (mergeType === "rebase") {
+    // Collect from all new commits after rebase
+    const newCommits = run(`git rev-list ${BASE_SHA}..HEAD`)
+      .split("\n")
+      .filter(Boolean);
+    const allAttributions: NoteAttribution[] = [];
+    for (const sha of newCommits) {
+      const note = readNote(sha);
+      if (note?.attributions) {
+        allAttributions.push(...note.attributions);
+      }
+    }
+    return allAttributions;
+  }
+
+  return [];
+}
+
+/**
+ * Update repository analytics after PR merge
+ */
+function updateRepositoryAnalytics(mergeType: MergeType): void {
+  log("Updating repository analytics...");
+
+  // Collect all attributions from this PR
+  const attributions = collectMergeAttributions(mergeType);
+  log(`Collected ${attributions.length} attributions from PR`);
+
+  // Read existing analytics
+  const existing = readAnalyticsNote();
+  if (existing) {
+    log(
+      `Found existing analytics: ${existing.history.length} PRs, ${existing.summary.total_lines} total lines`,
+    );
+  } else {
+    log("No existing analytics found, creating new");
+  }
+
+  // Update analytics
+  const updated = updateAnalytics(existing, attributions);
+
+  // Write updated analytics
+  if (writeAnalyticsNote(updated)) {
+    log(
+      `✓ Updated analytics: ${updated.summary.ai_lines}/${updated.summary.total_lines} AI lines (${Math.round((updated.summary.ai_lines / updated.summary.total_lines) * 100)}%)`,
+    );
+  }
+}
+
 /**
  * Main entry point
  */
@@ -525,6 +872,9 @@ async function main(): Promise<void> {
   } else if (mergeType === "rebase") {
     handleRebaseMerge(prCommits);
   }
+
+  // Update repository analytics (runs for all merge types)
+  updateRepositoryAnalytics(mergeType);
 
   log("Done");
 }

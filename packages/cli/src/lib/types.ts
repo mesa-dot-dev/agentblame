@@ -165,3 +165,72 @@ export interface GitState {
   cherryPickHead: string | null;
   bisectLog: boolean;
 }
+
+// =============================================================================
+// Analytics Types (Repository-wide aggregates)
+// =============================================================================
+
+/**
+ * Provider breakdown for analytics
+ */
+export interface ProviderBreakdown {
+  cursor?: number;
+  claude_code?: number;
+}
+
+/**
+ * Model breakdown for analytics (model name -> line count)
+ */
+export type ModelBreakdown = Record<string, number>;
+
+/**
+ * Per-contributor analytics
+ */
+export interface ContributorStats {
+  total_lines: number;
+  ai_lines: number;
+  by_provider: ProviderBreakdown;
+  by_model: ModelBreakdown;
+  pr_count: number;
+}
+
+/**
+ * PR history entry (compact format for storage efficiency)
+ * d=date, pr=PR number, t=title, author=author
+ * a=additions, r=removals, ai=AI lines
+ * p=by_provider, m=by_model
+ */
+export interface PRHistoryEntry {
+  d: string; // ISO date (YYYY-MM-DD)
+  pr: number;
+  t?: string; // title (optional to save space)
+  author: string;
+  a: number; // additions
+  r: number; // removals
+  ai: number; // AI-attributed lines
+  p?: ProviderBreakdown; // by_provider
+  m?: ModelBreakdown; // by_model
+}
+
+/**
+ * Repository-wide analytics summary
+ */
+export interface AnalyticsSummary {
+  total_lines: number;
+  ai_lines: number;
+  human_lines: number;
+  by_provider: ProviderBreakdown;
+  by_model: ModelBreakdown;
+  last_updated: string;
+}
+
+/**
+ * Analytics note format (stored as git note on analytics tag)
+ * Version 2 to distinguish from attribution notes (version 1)
+ */
+export interface AnalyticsNote {
+  version: 2;
+  summary: AnalyticsSummary;
+  contributors: Record<string, ContributorStats>;
+  history: PRHistoryEntry[];
+}

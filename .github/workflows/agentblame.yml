@@ -28,18 +28,25 @@ jobs:
 
       - name: Fetch attribution notes
         run: |
-          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing notes"
+          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing attribution notes"
+          git fetch origin refs/notes/agentblame-analytics:refs/notes/agentblame-analytics 2>/dev/null || echo "No existing analytics notes"
 
-      - name: Transfer notes if needed
-        run: bun run packages/action/src/transfer-notes.ts
+      - name: Transfer notes and update analytics
+        run: bun run packages/cli/src/transfer-notes.ts
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
 
-      - name: Push notes
+      - name: Push notes and tags
         run: |
-          git push origin refs/notes/agentblame 2>/dev/null || echo "No notes to push"
+          # Push attribution notes
+          git push origin refs/notes/agentblame 2>/dev/null || echo "No attribution notes to push"
+          # Push analytics notes
+          git push origin refs/notes/agentblame-analytics 2>/dev/null || echo "No analytics notes to push"
+          # Push analytics anchor tag
+          git push origin agentblame-analytics-anchor 2>/dev/null || echo "No analytics tag to push"
