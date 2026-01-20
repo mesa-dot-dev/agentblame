@@ -505,7 +505,7 @@ async function runStatus(): Promise<void> {
     const recent = getRecentPendingEdits(5);
     for (const edit of recent) {
       const time = new Date(edit.timestamp).toLocaleTimeString();
-      const file = edit.file_path.split("/").pop();
+      const file = edit.filePath.split("/").pop();
       console.log(`  [${edit.provider}] ${file} at ${time}`);
     }
 

@@ -12,35 +12,35 @@ import { getToken } from "./storage";
 const USE_MOCK_FALLBACK = false;
 
 export interface AnalyticsHistoryEntry {
-  d: string; // date (ISO)
-  pr: number; // pr_number
-  t?: string; // pr_title (optional)
-  author: string; // PR author
-  a: number; // lines_added
-  r: number; // lines_removed
-  ai: number; // ai_lines_added
-  p?: Record<string, number>; // by_provider
-  m?: Record<string, number>; // by_model
+  date: string;
+  pr: number;
+  title?: string;
+  author: string;
+  added: number;
+  removed: number;
+  aiLines: number;
+  providers?: Record<string, number>;
+  models?: Record<string, number>;
 }
 
 export interface AnalyticsSummary {
-  total_lines: number;
-  ai_lines: number;
-  human_lines: number;
-  by_provider: {
+  totalLines: number;
+  aiLines: number;
+  humanLines: number;
+  providers: {
     cursor?: number;
-    claude_code?: number;
+    claudeCode?: number;
   };
-  by_model: Record<string, number>;
-  last_updated: string;
+  models: Record<string, number>;
+  updated: string;
 }
 
 export interface ContributorStats {
-  total_lines: number;
-  ai_lines: number;
-  by_provider: Record<string, number>;
-  by_model: Record<string, number>;
-  pr_count: number;
+  totalLines: number;
+  aiLines: number;
+  providers: Record<string, number>;
+  models: Record<string, number>;
+  prCount: number;
 }
 
 export interface AnalyticsData {
@@ -119,123 +119,123 @@ async function setCachedAnalytics(owner: string, repo: string, data: AnalyticsDa
 export const MOCK_ANALYTICS: AnalyticsData = {
   version: 2,
   summary: {
-    total_lines: 15420,
-    ai_lines: 3847,
-    human_lines: 11573,
-    by_provider: {
+    totalLines: 15420,
+    aiLines: 3847,
+    humanLines: 11573,
+    providers: {
       cursor: 2100,
-      claude_code: 1747,
+      claudeCode: 1747,
     },
-    by_model: {
+    models: {
       "gpt-4": 1200,
       "gpt-4o": 900,
       "claude-3.5-sonnet": 1147,
       "claude-3-opus": 600,
     },
-    last_updated: new Date().toISOString(),
+    updated: new Date().toISOString(),
   },
   contributors: {
     alice: {
-      total_lines: 5000,
-      ai_lines: 2000,
-      by_provider: { cursor: 1200, claude_code: 800 },
-      by_model: { "gpt-4": 800, "claude-3.5-sonnet": 1200 },
-      pr_count: 15,
+      totalLines: 5000,
+      aiLines: 2000,
+      providers: { cursor: 1200, claudeCode: 800 },
+      models: { "gpt-4": 800, "claude-3.5-sonnet": 1200 },
+      prCount: 15,
     },
     bob: {
-      total_lines: 4000,
-      ai_lines: 1000,
-      by_provider: { cursor: 600, claude_code: 400 },
-      by_model: { "gpt-4o": 600, "claude-3-opus": 400 },
-      pr_count: 12,
+      totalLines: 4000,
+      aiLines: 1000,
+      providers: { cursor: 600, claudeCode: 400 },
+      models: { "gpt-4o": 600, "claude-3-opus": 400 },
+      prCount: 12,
     },
   },
   history: [
     {
-      d: new Date(Date.now() - 0 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 0 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 58,
-      t: "Add analytics dashboard",
+      title: "Add analytics dashboard",
       author: "alice",
-      a: 450,
-      r: 50,
-      ai: 280,
-      p: { cursor: 280 },
-      m: { "gpt-4": 280 },
+      added: 450,
+      removed: 50,
+      aiLines: 280,
+      providers: { cursor: 280 },
+      models: { "gpt-4": 280 },
     },
     {
-      d: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 57,
-      t: "Fix authentication bug",
+      title: "Fix authentication bug",
       author: "bob",
-      a: 120,
-      r: 30,
-      ai: 45,
-      p: { claude_code: 45 },
-      m: { "claude-3.5-sonnet": 45 },
+      added: 120,
+      removed: 30,
+      aiLines: 45,
+      providers: { claudeCode: 45 },
+      models: { "claude-3.5-sonnet": 45 },
     },
     {
-      d: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 56,
-      t: "Update dependencies",
+      title: "Update dependencies",
       author: "alice",
-      a: 80,
-      r: 20,
-      ai: 0,
+      added: 80,
+      removed: 20,
+      aiLines: 0,
     },
     {
-      d: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 55,
-      t: "Implement user settings page",
+      title: "Implement user settings page",
       author: "bob",
-      a: 320,
-      r: 40,
-      ai: 200,
-      p: { cursor: 120, claude_code: 80 },
-      m: { "gpt-4": 120, "claude-3.5-sonnet": 80 },
+      added: 320,
+      removed: 40,
+      aiLines: 200,
+      providers: { cursor: 120, claudeCode: 80 },
+      models: { "gpt-4": 120, "claude-3.5-sonnet": 80 },
     },
     {
-      d: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 54,
-      t: "Add API rate limiting",
+      title: "Add API rate limiting",
       author: "alice",
-      a: 180,
-      r: 10,
-      ai: 150,
-      p: { cursor: 150 },
-      m: { "gpt-4o": 150 },
+      added: 180,
+      removed: 10,
+      aiLines: 150,
+      providers: { cursor: 150 },
+      models: { "gpt-4o": 150 },
     },
     {
-      d: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 53,
-      t: "Refactor database queries",
+      title: "Refactor database queries",
       author: "bob",
-      a: 250,
-      r: 180,
-      ai: 180,
-      p: { claude_code: 180 },
-      m: { "claude-3-opus": 180 },
+      added: 250,
+      removed: 180,
+      aiLines: 180,
+      providers: { claudeCode: 180 },
+      models: { "claude-3-opus": 180 },
     },
     {
-      d: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 52,
-      t: "Add user authentication",
+      title: "Add user authentication",
       author: "alice",
-      a: 400,
-      r: 60,
-      ai: 320,
-      p: { cursor: 200, claude_code: 120 },
-      m: { "gpt-4": 200, "claude-3.5-sonnet": 120 },
+      added: 400,
+      removed: 60,
+      aiLines: 320,
+      providers: { cursor: 200, claudeCode: 120 },
+      models: { "gpt-4": 200, "claude-3.5-sonnet": 120 },
     },
     {
-      d: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      date: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       pr: 51,
-      t: "Initial project setup",
+      title: "Initial project setup",
       author: "bob",
-      a: 600,
-      r: 0,
-      ai: 400,
-      p: { cursor: 250, claude_code: 150 },
-      m: { "gpt-4": 150, "gpt-4o": 100, "claude-3.5-sonnet": 100, "claude-3-opus": 50 },
+      added: 600,
+      removed: 0,
+      aiLines: 400,
+      providers: { cursor: 250, claudeCode: 150 },
+      models: { "gpt-4": 150, "gpt-4o": 100, "claude-3.5-sonnet": 100, "claude-3-opus": 50 },
     },
   ],
 };
@@ -341,7 +341,7 @@ async function fetchRealAnalytics(
 
     // Validate version
     if (analytics.version !== 2) {
-      console.log("[Agent Blame] Invalid analytics version:", analytics.version);
+      console.log("[Agent Blame] Unsupported analytics version:", analytics.version);
       return null;
     }
 

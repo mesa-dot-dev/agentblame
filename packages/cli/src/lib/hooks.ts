@@ -375,7 +375,7 @@ export async function uninstallClaudeHooks(repoRoot: string): Promise<boolean> {
 }
 
 /**
- * GitHub Actions workflow content for handling squash/rebase merges
+ * GitHub Actions workflow content for handling squash/rebase merges and analytics
  */
 const GITHUB_WORKFLOW_CONTENT = `name: Agent Blame
 
@@ -390,14 +390,14 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: write  # Needed to push notes
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          ref: \${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0  # Full history needed for notes and blame
+          ref: \${{ github.event.pull_request.base.ref }}  # Checkout target branch (e.g., main)
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -405,24 +405,32 @@ jobs:
       - name: Install agentblame
         run: npm install -g @mesadev/agentblame
 
-      - name: Fetch PR head and notes
+      - name: Fetch notes, tags, and PR head
         run: |
-          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing notes"
-          git fetch origin refs/pull/\${{ github.event.pull_request.number }}/head:refs/pull/\${{ github.event.pull_request.number }}/head
+          git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing attribution notes"
+          git fetch origin refs/notes/agentblame-analytics:refs/notes/agentblame-analytics 2>/dev/null || echo "No existing analytics notes"
+          git fetch origin --tags 2>/dev/null || echo "No tags to fetch"
+          git fetch origin refs/pull/\${{ github.event.pull_request.number }}/head:refs/pull/\${{ github.event.pull_request.number }}/head 2>/dev/null || echo "Could not fetch PR head"
 
-      - name: Transfer notes
+      - name: Transfer notes and update analytics
+        run: bun \$(npm root -g)/@mesadev/agentblame/dist/transfer-notes.js
         env:
           PR_NUMBER: \${{ github.event.pull_request.number }}
           PR_TITLE: \${{ github.event.pull_request.title }}
+          PR_AUTHOR: \${{ github.event.pull_request.user.login }}
           BASE_REF: \${{ github.event.pull_request.base.ref }}
           BASE_SHA: \${{ github.event.pull_request.base.sha }}
           HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           MERGE_SHA: \${{ github.event.pull_request.merge_commit_sha }}
-        run: bun \$(npm root -g)/@mesadev/agentblame/dist/transfer-notes.js
 
-      - name: Push notes
+      - name: Push notes and tags
         run: |
-          git push origin refs/notes/agentblame 2>/dev/null || echo "No notes to push"
+          # Push attribution notes
+          git push origin refs/notes/agentblame 2>/dev/null || echo "No attribution notes to push"
+          # Push analytics notes
+          git push origin refs/notes/agentblame-analytics 2>/dev/null || echo "No analytics notes to push"
+          # Push analytics anchor tag
+          git push origin agentblame-analytics-anchor 2>/dev/null || echo "No analytics tag to push"
 `;
 
 /**

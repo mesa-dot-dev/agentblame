@@ -11,7 +11,7 @@
 /**
  * AI provider that generated the code
  */
-export type AiProvider = "cursor" | "claude_code";
+export type AiProvider = "cursor" | "claudeCode";
 
 /**
  * Attribution category - we only track AI-generated code
@@ -39,7 +39,7 @@ export type MatchType =
 export interface CapturedLine {
   content: string;
   hash: string;
-  hash_normalized: string;
+  hashNormalized: string;
 }
 
 // =============================================================================
@@ -51,16 +51,16 @@ export interface CapturedLine {
  */
 export interface DiffHunk {
   path: string;
-  start_line: number;
-  end_line: number;
+  startLine: number;
+  endLine: number;
   content: string;
-  content_hash: string;
-  content_hash_normalized: string;
+  contentHash: string;
+  contentHashNormalized: string;
   lines: Array<{
-    line_number: number;
+    lineNumber: number;
     content: string;
     hash: string;
-    hash_normalized: string;
+    hashNormalized: string;
   }>;
 }
 
@@ -69,21 +69,21 @@ export interface DiffHunk {
  */
 export interface DeletedBlock {
   path: string;
-  start_line: number;
+  startLine: number;
   lines: string[];
-  normalized_content: string;
+  normalizedContent: string;
 }
 
 /**
  * A detected move operation
  */
 export interface MoveMapping {
-  from_path: string;
-  from_start_line: number;
-  to_path: string;
-  to_start_line: number;
-  line_count: number;
-  normalized_content: string;
+  fromPath: string;
+  fromStartLine: number;
+  toPath: string;
+  toStartLine: number;
+  lineCount: number;
+  normalizedContent: string;
 }
 
 // =============================================================================
@@ -99,8 +99,8 @@ export interface LineAttribution {
   provider: AiProvider;
   model: string | null;
   confidence: number;
-  match_type: MatchType;
-  content_hash: string;
+  matchType: MatchType;
+  contentHash: string;
 }
 
 /**
@@ -108,13 +108,13 @@ export interface LineAttribution {
  */
 export interface RangeAttribution {
   path: string;
-  start_line: number;
-  end_line: number;
+  startLine: number;
+  endLine: number;
   provider: AiProvider;
   model: string | null;
   confidence: number;
-  match_type: MatchType;
-  content_hash: string;
+  matchType: MatchType;
+  contentHash: string;
 }
 
 /**
@@ -123,8 +123,8 @@ export interface RangeAttribution {
 export interface MatchResult {
   sha: string;
   attributions: RangeAttribution[];
-  unmatched_lines: number;
-  total_lines: number;
+  unmatchedLines: number;
+  totalLines: number;
 }
 
 // =============================================================================
@@ -132,21 +132,21 @@ export interface MatchResult {
 // =============================================================================
 
 /**
- * Git notes format for storing attribution
+ * Git notes format for storing attribution (version 2 with camelCase)
  */
 export interface GitNotesAttribution {
-  version: 1;
+  version: 2;
   timestamp: string;
   attributions: Array<{
     path: string;
-    start_line: number;
-    end_line: number;
+    startLine: number;
+    endLine: number;
     category: AttributionCategory;
     provider: AiProvider;
     model: string | null;
     confidence: number;
-    match_type: MatchType;
-    content_hash: string;
+    matchType: MatchType;
+    contentHash: string;
   }>;
 }
 
@@ -175,7 +175,7 @@ export interface GitState {
  */
 export interface ProviderBreakdown {
   cursor?: number;
-  claude_code?: number;
+  claudeCode?: number;
 }
 
 /**
@@ -187,46 +187,44 @@ export type ModelBreakdown = Record<string, number>;
  * Per-contributor analytics
  */
 export interface ContributorStats {
-  total_lines: number;
-  ai_lines: number;
-  by_provider: ProviderBreakdown;
-  by_model: ModelBreakdown;
-  pr_count: number;
+  totalLines: number;
+  aiLines: number;
+  providers: ProviderBreakdown;
+  models: ModelBreakdown;
+  prCount: number;
 }
 
 /**
- * PR history entry (compact format for storage efficiency)
- * d=date, pr=PR number, t=title, author=author
- * a=additions, r=removals, ai=AI lines
- * p=by_provider, m=by_model
+ * PR history entry
  */
 export interface PRHistoryEntry {
-  d: string; // ISO date (YYYY-MM-DD)
+  date: string; // ISO date (YYYY-MM-DD)
   pr: number;
-  t?: string; // title (optional to save space)
+  title?: string;
   author: string;
-  a: number; // additions
-  r: number; // removals
-  ai: number; // AI-attributed lines
-  p?: ProviderBreakdown; // by_provider
-  m?: ModelBreakdown; // by_model
+  added: number;
+  removed: number;
+  aiLines: number;
+  providers?: ProviderBreakdown;
+  models?: ModelBreakdown;
 }
 
 /**
  * Repository-wide analytics summary
  */
 export interface AnalyticsSummary {
-  total_lines: number;
-  ai_lines: number;
-  human_lines: number;
-  by_provider: ProviderBreakdown;
-  by_model: ModelBreakdown;
-  last_updated: string;
+  totalLines: number;
+  aiLines: number;
+  humanLines: number;
+  providers: ProviderBreakdown;
+  models: ModelBreakdown;
+  updated: string;
 }
 
 /**
  * Analytics note format (stored as git note on analytics tag)
- * Version 2 to distinguish from attribution notes (version 1)
+ * Version 2: Analytics with camelCase field names
+ * Version 1: Attribution notes (per-commit, different format)
  */
 export interface AnalyticsNote {
   version: 2;

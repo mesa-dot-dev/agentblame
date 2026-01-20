@@ -18,24 +18,24 @@ export interface DbEdit {
   id: number;
   timestamp: string;
   provider: AiProvider;
-  file_path: string;
+  filePath: string;
   model: string | null;
   content: string;
-  content_hash: string;
-  content_hash_normalized: string;
-  edit_type: string;
-  old_content: string | null;
+  contentHash: string;
+  contentHashNormalized: string;
+  editType: string;
+  oldContent: string | null;
   status: string;
-  matched_commit: string | null;
-  matched_at: string | null;
+  matchedCommit: string | null;
+  matchedAt: string | null;
 }
 
 export interface DbLine {
   id: number;
-  edit_id: number;
+  editId: number;
   content: string;
   hash: string;
-  hash_normalized: string;
+  hashNormalized: string;
 }
 
 export interface LineMatchResult {
@@ -181,13 +181,13 @@ export function initDatabase(): void {
 export interface InsertEditParams {
   timestamp: string;
   provider: AiProvider;
-  file_path: string;
+  filePath: string;
   model: string | null;
   content: string;
-  content_hash: string;
-  content_hash_normalized: string;
-  edit_type: string;
-  old_content?: string;
+  contentHash: string;
+  contentHashNormalized: string;
+  editType: string;
+  oldContent?: string;
   lines: CapturedLine[];
 }
 
@@ -207,13 +207,13 @@ export function insertEdit(params: InsertEditParams): number {
   const result = editStmt.run(
     params.timestamp,
     params.provider,
-    params.file_path,
+    params.filePath,
     params.model,
     params.content,
-    params.content_hash,
-    params.content_hash_normalized,
-    params.edit_type,
-    params.old_content || null
+    params.contentHash,
+    params.contentHashNormalized,
+    params.editType,
+    params.oldContent || null
   );
 
   const editId = Number(result.lastInsertRowid);
@@ -225,7 +225,7 @@ export function insertEdit(params: InsertEditParams): number {
   `);
 
   for (const line of params.lines) {
-    lineStmt.run(editId, line.content, line.hash, line.hash_normalized);
+    lineStmt.run(editId, line.content, line.hash, line.hashNormalized);
   }
 
   return editId;
@@ -287,10 +287,10 @@ export function findByExactHash(
     edit: rowToEdit(row),
     line: {
       id: row.line_id,
-      edit_id: row.edit_id,
+      editId: row.edit_id,
       content: row.line_content,
       hash: row.hash,
-      hash_normalized: row.hash_normalized,
+      hashNormalized: row.hash_normalized,
     },
     matchType: "exact_hash",
     confidence: 1.0,
@@ -348,10 +348,10 @@ export function findByNormalizedHash(
     edit: rowToEdit(row),
     line: {
       id: row.line_id,
-      edit_id: row.edit_id,
+      editId: row.edit_id,
       content: row.line_content,
       hash: row.hash,
-      hash_normalized: row.hash_normalized,
+      hashNormalized: row.hash_normalized,
     },
     matchType: "normalized_hash",
     confidence: 0.95,
@@ -383,7 +383,14 @@ export function findEditsByFile(filePath: string): DbEdit[] {
 export function getEditLines(editId: number): DbLine[] {
   const db = getDatabase();
   const stmt = db.prepare(`SELECT * FROM lines WHERE edit_id = ?`);
-  return stmt.all(editId) as DbLine[];
+  const rows = stmt.all(editId) as any[];
+  return rows.map(row => ({
+    id: row.id,
+    editId: row.edit_id,
+    content: row.content,
+    hash: row.hash,
+    hashNormalized: row.hash_normalized,
+  }));
 }
 
 /**
@@ -408,10 +415,10 @@ export function findBySubstring(
         edit,
         line: {
           id: 0,
-          edit_id: edit.id,
+          editId: edit.id,
           content: normalizedLine,
           hash: "",
-          hash_normalized: "",
+          hashNormalized: "",
         },
         matchType: "line_in_ai_content",
         confidence: 0.9,
@@ -588,15 +595,15 @@ function rowToEdit(row: any): DbEdit {
     id: row.id,
     timestamp: row.timestamp,
     provider: row.provider as AiProvider,
-    file_path: row.file_path,
+    filePath: row.file_path,
     model: row.model,
     content: row.content,
-    content_hash: row.content_hash,
-    content_hash_normalized: row.content_hash_normalized,
-    edit_type: row.edit_type,
-    old_content: row.old_content,
+    contentHash: row.content_hash,
+    contentHashNormalized: row.content_hash_normalized,
+    editType: row.edit_type,
+    oldContent: row.old_content,
     status: row.status,
-    matched_commit: row.matched_commit,
-    matched_at: row.matched_at,
+    matchedCommit: row.matched_commit,
+    matchedAt: row.matched_at,
   };
 }

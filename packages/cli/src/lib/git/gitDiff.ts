@@ -83,10 +83,10 @@ export function parseDiff(diffOutput: string): DiffHunk[] {
   let hunkStartLine = 0;
   let currentLineNum = 0;
   let hunkLines: Array<{
-    line_number: number;
+    lineNumber: number;
     content: string;
     hash: string;
-    hash_normalized: string;
+    hashNormalized: string;
   }> = [];
 
   for (const line of diffLines) {
@@ -97,11 +97,11 @@ export function parseDiff(diffOutput: string): DiffHunk[] {
         const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentPath,
-          start_line: hunkStartLine,
-          end_line: hunkStartLine + hunkLines.length - 1,
+          startLine: hunkStartLine,
+          endLine: hunkStartLine + hunkLines.length - 1,
           content,
-          content_hash: computeContentHash(content),
-          content_hash_normalized: computeNormalizedHash(content),
+          contentHash: computeContentHash(content),
+          contentHashNormalized: computeNormalizedHash(content),
           lines: hunkLines,
         });
         hunkLines = [];
@@ -117,11 +117,11 @@ export function parseDiff(diffOutput: string): DiffHunk[] {
         const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentPath,
-          start_line: hunkStartLine,
-          end_line: hunkStartLine + hunkLines.length - 1,
+          startLine: hunkStartLine,
+          endLine: hunkStartLine + hunkLines.length - 1,
           content,
-          content_hash: computeContentHash(content),
-          content_hash_normalized: computeNormalizedHash(content),
+          contentHash: computeContentHash(content),
+          contentHashNormalized: computeNormalizedHash(content),
           lines: hunkLines,
         });
         hunkLines = [];
@@ -140,10 +140,10 @@ export function parseDiff(diffOutput: string): DiffHunk[] {
     if (line.startsWith("+") && !line.startsWith("+++")) {
       const content = line.slice(1); // Remove leading +
       hunkLines.push({
-        line_number: currentLineNum,
+        lineNumber: currentLineNum,
         content,
         hash: computeContentHash(content),
-        hash_normalized: computeNormalizedHash(content),
+        hashNormalized: computeNormalizedHash(content),
       });
       currentLineNum++;
     } else if (!line.startsWith("-") && !line.startsWith("\\")) {
@@ -157,11 +157,11 @@ export function parseDiff(diffOutput: string): DiffHunk[] {
     const content = hunkLines.map((l) => l.content).join("\n");
     hunks.push({
       path: currentPath,
-      start_line: hunkStartLine,
-      end_line: hunkStartLine + hunkLines.length - 1,
+      startLine: hunkStartLine,
+      endLine: hunkStartLine + hunkLines.length - 1,
       content,
-      content_hash: computeContentHash(content),
-      content_hash_normalized: computeNormalizedHash(content),
+      contentHash: computeContentHash(content),
+      contentHashNormalized: computeNormalizedHash(content),
       lines: hunkLines,
     });
   }
@@ -188,9 +188,9 @@ export function parseDeletedBlocks(diffOutput: string): DeletedBlock[] {
       if (currentPath && deletedLines.length >= 3) {
         blocks.push({
           path: currentPath,
-          start_line: deleteStartLine,
+          startLine: deleteStartLine,
           lines: deletedLines,
-          normalized_content: deletedLines.map((l) => l.trim()).join("\n"),
+          normalizedContent: deletedLines.map((l) => l.trim()).join("\n"),
         });
       }
       currentPath = line.slice(6);
@@ -204,9 +204,9 @@ export function parseDeletedBlocks(diffOutput: string): DeletedBlock[] {
       if (currentPath && deletedLines.length >= 3) {
         blocks.push({
           path: currentPath,
-          start_line: deleteStartLine,
+          startLine: deleteStartLine,
           lines: deletedLines,
-          normalized_content: deletedLines.map((l) => l.trim()).join("\n"),
+          normalizedContent: deletedLines.map((l) => l.trim()).join("\n"),
         });
       }
       deletedLines = [];
@@ -232,9 +232,9 @@ export function parseDeletedBlocks(diffOutput: string): DeletedBlock[] {
       if (currentPath && deletedLines.length >= 3) {
         blocks.push({
           path: currentPath,
-          start_line: deleteStartLine,
+          startLine: deleteStartLine,
           lines: deletedLines,
-          normalized_content: deletedLines.map((l) => l.trim()).join("\n"),
+          normalizedContent: deletedLines.map((l) => l.trim()).join("\n"),
         });
       }
       deletedLines = [];
@@ -243,9 +243,9 @@ export function parseDeletedBlocks(diffOutput: string): DeletedBlock[] {
       if (currentPath && deletedLines.length >= 3) {
         blocks.push({
           path: currentPath,
-          start_line: deleteStartLine,
+          startLine: deleteStartLine,
           lines: deletedLines,
-          normalized_content: deletedLines.map((l) => l.trim()).join("\n"),
+          normalizedContent: deletedLines.map((l) => l.trim()).join("\n"),
         });
       }
       deletedLines = [];
@@ -257,9 +257,9 @@ export function parseDeletedBlocks(diffOutput: string): DeletedBlock[] {
   if (currentPath && deletedLines.length >= 3) {
     blocks.push({
       path: currentPath,
-      start_line: deleteStartLine,
+      startLine: deleteStartLine,
       lines: deletedLines,
-      normalized_content: deletedLines.map((l) => l.trim()).join("\n"),
+      normalizedContent: deletedLines.map((l) => l.trim()).join("\n"),
     });
   }
 
@@ -290,21 +290,21 @@ export function detectMoves(
       // Check for matching normalized content
       const addedNormalized = added.lines.map((l) => l.content.trim()).join("\n");
 
-      if (deleted.normalized_content === addedNormalized) {
+      if (deleted.normalizedContent === addedNormalized) {
         moves.push({
-          from_path: deleted.path,
-          from_start_line: deleted.start_line,
-          to_path: added.path,
-          to_start_line: added.start_line,
-          line_count: deleted.lines.length,
-          normalized_content: deleted.normalized_content,
+          fromPath: deleted.path,
+          fromStartLine: deleted.startLine,
+          toPath: added.path,
+          toStartLine: added.startLine,
+          lineCount: deleted.lines.length,
+          normalizedContent: deleted.normalizedContent,
         });
         break; // Only match once
       }
 
       // Check for partial moves (deleted content is subset of added)
       if (
-        addedNormalized.includes(deleted.normalized_content) &&
+        addedNormalized.includes(deleted.normalizedContent) &&
         deleted.lines.length >= MOVE_THRESHOLD
       ) {
         // Find where in the added hunk the deleted content starts
@@ -327,12 +327,12 @@ export function detectMoves(
 
         if (matchStartIdx >= 0) {
           moves.push({
-            from_path: deleted.path,
-            from_start_line: deleted.start_line,
-            to_path: added.path,
-            to_start_line: added.start_line + matchStartIdx,
-            line_count: deleted.lines.length,
-            normalized_content: deleted.normalized_content,
+            fromPath: deleted.path,
+            fromStartLine: deleted.startLine,
+            toPath: added.path,
+            toStartLine: added.startLine + matchStartIdx,
+            lineCount: deleted.lines.length,
+            normalizedContent: deleted.normalizedContent,
           });
           break;
         }
@@ -352,14 +352,14 @@ export function buildMoveIndex(
   const index = new Map<string, { fromPath: string; fromLine: number }>();
 
   for (const move of moves) {
-    for (let i = 0; i < move.line_count; i++) {
+    for (let i = 0; i < move.lineCount; i++) {
       // Key: normalized content of each line
-      const lineContent = move.normalized_content.split("\n")[i];
+      const lineContent = move.normalizedContent.split("\n")[i];
       if (lineContent) {
-        const key = `${move.to_path}:${move.to_start_line + i}`;
+        const key = `${move.toPath}:${move.toStartLine + i}`;
         index.set(key, {
-          fromPath: move.from_path,
-          fromLine: move.from_start_line + i,
+          fromPath: move.fromPath,
+          fromLine: move.fromStartLine + i,
         });
       }
     }

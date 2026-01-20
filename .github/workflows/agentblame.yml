@@ -26,10 +26,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Fetch attribution notes
+      - name: Fetch notes, tags, and PR head
         run: |
           git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing attribution notes"
           git fetch origin refs/notes/agentblame-analytics:refs/notes/agentblame-analytics 2>/dev/null || echo "No existing analytics notes"
+          git fetch origin --tags 2>/dev/null || echo "No tags to fetch"
+          git fetch origin refs/pull/${{ github.event.pull_request.number }}/head:refs/pull/${{ github.event.pull_request.number }}/head 2>/dev/null || echo "Could not fetch PR head"
 
       - name: Transfer notes and update analytics
         run: bun run packages/cli/src/transfer-notes.ts

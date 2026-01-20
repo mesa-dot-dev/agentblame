@@ -162,7 +162,7 @@ function collectPRAttributions(prCommits: string[]): {
     }
 
     for (const attr of note.attributions) {
-      const hash = attr.content_hash;
+      const hash = attr.contentHash;
       if (!byHash.has(hash)) {
         byHash.set(hash, []);
       }
@@ -348,8 +348,8 @@ function findContainedAttributions(
     results.push({
       ...cleanAttr,
       path: hunk.path,
-      start_line: startLine,
-      end_line: endLine,
+      startLine: startLine,
+      endLine: endLine,
     });
 
     log(
@@ -395,10 +395,10 @@ function handleSquashMerge(prCommits: string[]): void {
       newAttributions.push({
         ...attr,
         path: hunk.path,
-        start_line: hunk.startLine,
-        end_line: hunk.endLine,
+        startLine: hunk.startLine,
+        endLine: hunk.endLine,
       });
-      matchedContentHashes.add(attr.content_hash);
+      matchedContentHashes.add(attr.contentHash);
       log(
         `  Exact match: ${hunk.path}:${hunk.startLine}-${hunk.endLine} (${attr.provider})`,
       );
@@ -407,13 +407,13 @@ function handleSquashMerge(prCommits: string[]): void {
 
     // Fallback: check if any AI content is contained within this hunk
     const unmatchedAttrs = withContent.filter(
-      (a) => !matchedContentHashes.has(a.content_hash),
+      (a) => !matchedContentHashes.has(a.contentHash),
     );
     const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
 
     for (const match of containedMatches) {
       newAttributions.push(match);
-      matchedContentHashes.add(match.content_hash);
+      matchedContentHashes.add(match.contentHash);
     }
   }
 
@@ -424,7 +424,7 @@ function handleSquashMerge(prCommits: string[]): void {
 
   // Write note to squash commit
   const note: GitNotesAttribution = {
-    version: 1,
+    version: 2,
     timestamp: new Date().toISOString(),
     attributions: newAttributions,
   };
@@ -468,28 +468,28 @@ function handleRebaseMerge(prCommits: string[]): void {
         newAttributions.push({
           ...attr,
           path: hunk.path,
-          start_line: hunk.startLine,
-          end_line: hunk.endLine,
+          startLine: hunk.startLine,
+          endLine: hunk.endLine,
         });
-        matchedContentHashes.add(attr.content_hash);
+        matchedContentHashes.add(attr.contentHash);
         continue;
       }
 
       // Fallback: containment matching
       const unmatchedAttrs = withContent.filter(
-        (a) => !matchedContentHashes.has(a.content_hash),
+        (a) => !matchedContentHashes.has(a.contentHash),
       );
       const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
 
       for (const match of containedMatches) {
         newAttributions.push(match);
-        matchedContentHashes.add(match.content_hash);
+        matchedContentHashes.add(match.contentHash);
       }
     }
 
     if (newAttributions.length > 0) {
       const note: GitNotesAttribution = {
-        version: 1,
+        version: 2,
         timestamp: new Date().toISOString(),
         attributions: newAttributions,
       };
@@ -626,7 +626,7 @@ function aggregatePRStats(
   const byModel: ModelBreakdown = {};
 
   for (const attr of attributions) {
-    const lineCount = attr.end_line - attr.start_line + 1;
+    const lineCount = attr.endLine - attr.startLine + 1;
     aiLines += lineCount;
 
     // Aggregate by provider
@@ -682,53 +682,53 @@ function updateAnalytics(
 
   // Create history entry for this PR
   const historyEntry: PRHistoryEntry = {
-    d: today,
+    date: today,
     pr: parseInt(PR_NUMBER, 10) || 0,
-    t: PR_TITLE.slice(0, 100), // Truncate long titles
+    title: PR_TITLE.slice(0, 100), // Truncate long titles
     author: PR_AUTHOR,
-    a: diffStats.additions,
-    r: diffStats.deletions,
-    ai: prStats.aiLines,
-    p: Object.keys(prStats.byProvider).length > 0 ? prStats.byProvider : undefined,
-    m: Object.keys(prStats.byModel).length > 0 ? prStats.byModel : undefined,
+    added: diffStats.additions,
+    removed: diffStats.deletions,
+    aiLines: prStats.aiLines,
+    providers: Object.keys(prStats.byProvider).length > 0 ? prStats.byProvider : undefined,
+    models: Object.keys(prStats.byModel).length > 0 ? prStats.byModel : undefined,
   };
 
   if (existing) {
     // Update existing analytics
     const newSummary = {
-      total_lines: existing.summary.total_lines + diffStats.additions,
-      ai_lines: existing.summary.ai_lines + prStats.aiLines,
-      human_lines:
-        existing.summary.human_lines +
+      totalLines: existing.summary.totalLines + diffStats.additions,
+      aiLines: existing.summary.aiLines + prStats.aiLines,
+      humanLines:
+        existing.summary.humanLines +
         (diffStats.additions - prStats.aiLines),
-      by_provider: mergeProviders(
-        existing.summary.by_provider,
+      providers: mergeProviders(
+        existing.summary.providers,
         prStats.byProvider,
       ),
-      by_model: mergeModels(existing.summary.by_model, prStats.byModel),
-      last_updated: now,
+      models: mergeModels(existing.summary.models, prStats.byModel),
+      updated: now,
     };
 
     // Update contributor stats
     const contributors = { ...existing.contributors };
     if (!contributors[PR_AUTHOR]) {
       contributors[PR_AUTHOR] = {
-        total_lines: 0,
-        ai_lines: 0,
-        by_provider: {},
-        by_model: {},
-        pr_count: 0,
+        totalLines: 0,
+        aiLines: 0,
+        providers: {},
+        models: {},
+        prCount: 0,
       };
     }
     const authorStats = contributors[PR_AUTHOR];
-    authorStats.total_lines += diffStats.additions;
-    authorStats.ai_lines += prStats.aiLines;
-    authorStats.by_provider = mergeProviders(
-      authorStats.by_provider,
+    authorStats.totalLines += diffStats.additions;
+    authorStats.aiLines += prStats.aiLines;
+    authorStats.providers = mergeProviders(
+      authorStats.providers,
       prStats.byProvider,
     );
-    authorStats.by_model = mergeModels(authorStats.by_model, prStats.byModel);
-    authorStats.pr_count += 1;
+    authorStats.models = mergeModels(authorStats.models, prStats.byModel);
+    authorStats.prCount += 1;
 
     // Add to history (keep last 100 PRs)
     const history = [historyEntry, ...existing.history].slice(0, 100);
@@ -744,23 +744,23 @@ function updateAnalytics(
   // Create new analytics
   const contributors: Record<string, ContributorStats> = {
     [PR_AUTHOR]: {
-      total_lines: diffStats.additions,
-      ai_lines: prStats.aiLines,
-      by_provider: prStats.byProvider,
-      by_model: prStats.byModel,
-      pr_count: 1,
+      totalLines: diffStats.additions,
+      aiLines: prStats.aiLines,
+      providers: prStats.byProvider,
+      models: prStats.byModel,
+      prCount: 1,
     },
   };
 
   return {
     version: 2,
     summary: {
-      total_lines: diffStats.additions,
-      ai_lines: prStats.aiLines,
-      human_lines: diffStats.additions - prStats.aiLines,
-      by_provider: prStats.byProvider,
-      by_model: prStats.byModel,
-      last_updated: now,
+      totalLines: diffStats.additions,
+      aiLines: prStats.aiLines,
+      humanLines: diffStats.additions - prStats.aiLines,
+      providers: prStats.byProvider,
+      models: prStats.byModel,
+      updated: now,
     },
     contributors,
     history: [historyEntry],
@@ -823,7 +823,7 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
   const existing = readAnalyticsNote();
   if (existing) {
     log(
-      `Found existing analytics: ${existing.history.length} PRs, ${existing.summary.total_lines} total lines`,
+      `Found existing analytics: ${existing.history.length} PRs, ${existing.summary.totalLines} total lines`,
     );
   } else {
     log("No existing analytics found, creating new");
@@ -835,7 +835,7 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
   // Write updated analytics
   if (writeAnalyticsNote(updated)) {
     log(
-      `✓ Updated analytics: ${updated.summary.ai_lines}/${updated.summary.total_lines} AI lines (${Math.round((updated.summary.ai_lines / updated.summary.total_lines) * 100)}%)`,
+      `✓ Updated analytics: ${updated.summary.aiLines}/${updated.summary.totalLines} AI lines (${Math.round((updated.summary.aiLines / updated.summary.totalLines) * 100)}%)`,
     );
   }
 }
@@ -854,7 +854,10 @@ async function main(): Promise<void> {
   const mergeType = detectMergeType();
 
   if (mergeType === "merge_commit") {
-    log("Merge commit detected - notes survive automatically, nothing to do");
+    log("Merge commit detected - notes survive automatically on original commits");
+    // Still update analytics for merge commits
+    updateRepositoryAnalytics(mergeType);
+    log("Done");
     return;
   }
 

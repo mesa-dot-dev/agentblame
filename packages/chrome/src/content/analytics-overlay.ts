@@ -212,57 +212,57 @@ function filterAnalyticsByPeriod(
 
   // Filter history entries
   const filteredHistory = analytics.history.filter((entry) => {
-    const entryDate = new Date(entry.d).getTime();
+    const entryDate = new Date(entry.date).getTime();
     return entryDate >= cutoff;
   });
 
   // Recalculate summary from filtered history
   let totalLines = 0;
   let aiLines = 0;
-  const byProvider: Record<string, number> = {};
-  const byModel: Record<string, number> = {};
+  const providers: Record<string, number> = {};
+  const models: Record<string, number> = {};
   const contributors: Record<string, typeof analytics.contributors[string]> = {};
 
   for (const entry of filteredHistory) {
-    totalLines += entry.a;
-    aiLines += entry.ai;
+    totalLines += entry.added;
+    aiLines += entry.aiLines;
 
     // Aggregate by provider
-    if (entry.p) {
-      for (const [provider, count] of Object.entries(entry.p)) {
-        byProvider[provider] = (byProvider[provider] || 0) + count;
+    if (entry.providers) {
+      for (const [provider, count] of Object.entries(entry.providers)) {
+        providers[provider] = (providers[provider] || 0) + count;
       }
     }
 
     // Aggregate by model
-    if (entry.m) {
-      for (const [model, count] of Object.entries(entry.m)) {
-        byModel[model] = (byModel[model] || 0) + count;
+    if (entry.models) {
+      for (const [model, count] of Object.entries(entry.models)) {
+        models[model] = (models[model] || 0) + count;
       }
     }
 
     // Aggregate by contributor
     if (!contributors[entry.author]) {
       contributors[entry.author] = {
-        total_lines: 0,
-        ai_lines: 0,
-        by_provider: {},
-        by_model: {},
-        pr_count: 0,
+        totalLines: 0,
+        aiLines: 0,
+        providers: {},
+        models: {},
+        prCount: 0,
       };
     }
     const c = contributors[entry.author];
-    c.total_lines += entry.a;
-    c.ai_lines += entry.ai;
-    c.pr_count += 1;
-    if (entry.p) {
-      for (const [provider, count] of Object.entries(entry.p)) {
-        c.by_provider[provider] = (c.by_provider[provider] || 0) + count;
+    c.totalLines += entry.added;
+    c.aiLines += entry.aiLines;
+    c.prCount += 1;
+    if (entry.providers) {
+      for (const [provider, count] of Object.entries(entry.providers)) {
+        c.providers[provider] = (c.providers[provider] || 0) + count;
       }
     }
-    if (entry.m) {
-      for (const [model, count] of Object.entries(entry.m)) {
-        c.by_model[model] = (c.by_model[model] || 0) + count;
+    if (entry.models) {
+      for (const [model, count] of Object.entries(entry.models)) {
+        c.models[model] = (c.models[model] || 0) + count;
       }
     }
   }
@@ -270,12 +270,12 @@ function filterAnalyticsByPeriod(
   return {
     version: 2,
     summary: {
-      total_lines: totalLines,
-      ai_lines: aiLines,
-      human_lines: totalLines - aiLines,
-      by_provider: byProvider as AnalyticsData["summary"]["by_provider"],
-      by_model: byModel,
-      last_updated: analytics.summary.last_updated,
+      totalLines: totalLines,
+      aiLines: aiLines,
+      humanLines: totalLines - aiLines,
+      providers: providers as AnalyticsData["summary"]["providers"],
+      models: models,
+      updated: analytics.summary.updated,
     },
     contributors,
     history: filteredHistory,
@@ -320,14 +320,14 @@ function renderAnalyticsPage(
   fullAnalytics?: AnalyticsData
 ): string {
   const aiPercent =
-    analytics.summary.total_lines > 0
+    analytics.summary.totalLines > 0
       ? Math.round(
-          (analytics.summary.ai_lines / analytics.summary.total_lines) * 100
+          (analytics.summary.aiLines / analytics.summary.totalLines) * 100
         )
       : 0;
 
-  // Use fullAnalytics for last_updated if available
-  const lastUpdated = fullAnalytics?.summary.last_updated || analytics.summary.last_updated;
+  // Use fullAnalytics for updated if available
+  const lastUpdated = fullAnalytics?.summary.updated || analytics.summary.updated;
 
   return `
     <div class="mt-4">
@@ -380,12 +380,12 @@ function renderRepositorySection(
   aiPercent: number
 ): string {
   const { summary } = analytics;
-  const cursorLines = summary.by_provider.cursor || 0;
-  const claudeLines = summary.by_provider.claude_code || 0;
+  const cursorLines = summary.providers.cursor || 0;
+  const claudeLines = summary.providers.claudeCode || 0;
   const humanPercent = 100 - aiPercent;
 
   // Get top models sorted by lines
-  const modelEntries = Object.entries(summary.by_model).sort(
+  const modelEntries = Object.entries(summary.models).sort(
     ([, a], [, b]) => b - a
   );
   const totalModelLines = modelEntries.reduce((sum, [, v]) => sum + v, 0);
@@ -402,7 +402,7 @@ function renderRepositorySection(
           <div class="flex-1 text-center p-3 rounded-2" style="background: var(--color-severe-subtle); border: 1px solid var(--color-severe-muted);">
             <div class="f1 text-bold" style="color: var(--color-severe-fg);">${aiPercent}%</div>
             <div class="f6 color-fg-muted">AI-written code</div>
-            <div class="f6 color-fg-muted">${summary.ai_lines.toLocaleString()} of ${summary.total_lines.toLocaleString()} lines</div>
+            <div class="f6 color-fg-muted">${summary.aiLines.toLocaleString()} of ${summary.totalLines.toLocaleString()} lines</div>
           </div>
           <!-- Cursor Card -->
           <div class="flex-1 text-center p-3 rounded-2 color-bg-subtle">
@@ -469,7 +469,7 @@ function renderRepositorySection(
 function renderContributorsSection(analytics: AnalyticsData): string {
   const contributors = Object.entries(analytics.contributors)
     .map(([username, stats]) => ({ username, ...stats }))
-    .sort((a, b) => b.total_lines - a.total_lines)
+    .sort((a, b) => b.totalLines - a.totalLines)
     .slice(0, 10);
 
   if (contributors.length === 0) {
@@ -490,7 +490,7 @@ function renderContributorsSection(analytics: AnalyticsData): string {
   const rows = contributors
     .map((c) => {
       const aiPercent =
-        c.total_lines > 0 ? Math.round((c.ai_lines / c.total_lines) * 100) : 0;
+        c.totalLines > 0 ? Math.round((c.aiLines / c.totalLines) * 100) : 0;
       const humanPercent = 100 - aiPercent;
 
       return `
@@ -506,10 +506,10 @@ function renderContributorsSection(analytics: AnalyticsData): string {
           </div>
         </div>
         <div class="f6 color-fg-muted text-right" style="width: 90px;">
-          ${c.total_lines.toLocaleString()} lines
+          ${c.totalLines.toLocaleString()} lines
         </div>
         <div class="f6 color-fg-muted text-right" style="width: 60px;">
-          ${c.pr_count} PRs
+          ${c.prCount} PRs
         </div>
       </div>
     `;
@@ -554,7 +554,7 @@ function renderPullRequestsSection(
 
   const rows = recentPRs
     .map((pr) => {
-      const aiPercent = pr.a > 0 ? Math.round((pr.ai / pr.a) * 100) : 0;
+      const aiPercent = pr.added > 0 ? Math.round((pr.aiLines / pr.added) * 100) : 0;
       const badgeStyle =
         aiPercent > 50
           ? "background: var(--color-severe-fg); color: white;"
@@ -567,14 +567,14 @@ function renderPullRequestsSection(
         <span class="f6 color-fg-muted" style="width: 45px;">#${pr.pr}</span>
         <div class="flex-1 text-truncate">
           <a href="https://github.com/${owner}/${repo}/pull/${pr.pr}" class="Link--primary f6">
-            ${escapeHtml(pr.t || `PR #${pr.pr}`)}
+            ${escapeHtml(pr.title || `PR #${pr.pr}`)}
           </a>
         </div>
         <span class="f6 color-fg-muted" style="width: 80px;">
           ${escapeHtml(pr.author)}
         </span>
         <span class="f6 color-fg-muted" style="width: 70px; text-align: right;">
-          +${pr.a}/-${pr.r}
+          +${pr.added}/-${pr.removed}
         </span>
         <span class="Label f6" style="${badgeStyle} width: 60px; text-align: center;">
           ${aiPercent}% AI

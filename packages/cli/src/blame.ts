@@ -115,7 +115,7 @@ export async function blame(
       if (!pathMatches) return false;
 
       // Check if original line number (at commit time) is within the attribution range
-      return line.origLine >= a.start_line && line.origLine <= a.end_line;
+      return line.origLine >= a.startLine && line.origLine <= a.endLine;
     });
     return { line, attribution: attr || null };
   });
@@ -217,7 +217,7 @@ function outputSummary(lines: LineAttribution[], filePath: string): void {
       const provider = attribution.provider;
       providers.set(provider, (providers.get(provider) || 0) + 1);
 
-      const matchType = attribution.match_type;
+      const matchType = attribution.matchType;
       matchTypes.set(matchType, (matchTypes.get(matchType) || 0) + 1);
     }
   }
@@ -258,8 +258,8 @@ function outputJson(lines: LineAttribution[], filePath: string): void {
             category: attribution.category,
             provider: attribution.provider,
             model: attribution.model,
-            match_type: attribution.match_type,
-            content_hash: attribution.content_hash,
+            matchType: attribution.matchType,
+            contentHash: attribution.contentHash,
           }
         : null,
     })),

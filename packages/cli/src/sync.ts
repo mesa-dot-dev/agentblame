@@ -304,7 +304,7 @@ function collectPRAttributions(
     }
 
     for (const attr of note.attributions) {
-      const hash = attr.content_hash;
+      const hash = attr.contentHash;
       if (!byHash.has(hash)) {
         byHash.set(hash, []);
       }
@@ -360,8 +360,8 @@ function findContainedAttributions(
     results.push({
       ...cleanAttr,
       path: hunk.path,
-      start_line: startLine,
-      end_line: endLine,
+      startLine: startLine,
+      endLine: endLine,
     });
   }
 
@@ -400,25 +400,25 @@ function transferNotes(
       newAttributions.push({
         ...attr,
         path: hunk.path,
-        start_line: hunk.startLine,
-        end_line: hunk.startLine + hunk.content.split("\n").length - 1,
+        startLine: hunk.startLine,
+        endLine: hunk.startLine + hunk.content.split("\n").length - 1,
       });
-      matchedHashes.add(attr.content_hash);
+      matchedHashes.add(attr.contentHash);
       vlog(`  Exact match: ${hunk.path}:${hunk.startLine}`, options);
       continue;
     }
 
     // Fallback: containment matching
     const unmatchedAttrs = withContent.filter(
-      (a) => !matchedHashes.has(a.content_hash),
+      (a) => !matchedHashes.has(a.contentHash),
     );
     const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
 
     for (const match of containedMatches) {
       newAttributions.push(match);
-      matchedHashes.add(match.content_hash);
+      matchedHashes.add(match.contentHash);
       vlog(
-        `  Contained match: ${match.path}:${match.start_line}-${match.end_line}`,
+        `  Contained match: ${match.path}:${match.startLine}-${match.endLine}`,
         options,
       );
     }
@@ -434,7 +434,7 @@ function transferNotes(
   }
 
   const note: GitNotesAttribution = {
-    version: 1,
+    version: 2,
     timestamp: new Date().toISOString(),
     attributions: newAttributions,
   };
