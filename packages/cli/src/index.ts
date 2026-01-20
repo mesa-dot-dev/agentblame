@@ -81,6 +81,10 @@ async function main(): Promise<void> {
     case "prune":
       await runPrune();
       break;
+    case "--version":
+    case "-v":
+      printVersion();
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -113,6 +117,16 @@ Examples:
   agentblame init
   agentblame blame src/index.ts
 `);
+}
+
+function printVersion(): void {
+  const packageJsonPath = path.join(__dirname, "..", "package.json");
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    console.log(`agentblame v${packageJson.version}`);
+  } catch {
+    console.log("agentblame (version unknown)");
+  }
 }
 
 /**
