@@ -33,7 +33,7 @@ agentblame/
 │   │   └── src/
 │   │       ├── lib/      # Core types, utilities, git operations
 │   │       ├── capture.ts        # Hook handler for Cursor/Claude Code
-│   │       ├── transfer-notes.ts # GitHub Action entry point
+│   │       ├── post-merge.ts     # GitHub Action entry point
 │   │       ├── blame.ts          # blame command
 │   │       ├── sync.ts           # sync command
 │   │       └── index.ts          # CLI entry point

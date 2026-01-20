@@ -24,7 +24,7 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  magenta: "\x1b[35m",
+  orange: "\x1b[38;5;166m", // Mesa Orange - matches gutter color
   blue: "\x1b[34m",
   gray: "\x1b[90m",
 };
@@ -156,7 +156,7 @@ function outputFormatted(lines: LineAttribution[], filePath: string): void {
       const model = attribution.model && attribution.model !== "claude" ? attribution.model : "";
       const label = model ? `${provider} - ${model}` : provider;
       visibleLen = label.length + 3; // +2 for emoji (renders 2-wide) + 1 space
-      attrInfo = `${c.magenta}✨ ${label}${c.reset}`;
+      attrInfo = `${c.orange}✨ ${label}${c.reset}`;
     }
 
     const attrPadded = attribution
@@ -181,12 +181,12 @@ function outputFormatted(lines: LineAttribution[], filePath: string): void {
   const barWidth = 40;
   const aiBarWidth = Math.round((aiPct / 100) * barWidth);
   const humanBarWidth = barWidth - aiBarWidth;
-  const aiBar = `${c.magenta}${"█".repeat(aiBarWidth)}${c.reset}`;
+  const aiBar = `${c.orange}${"█".repeat(aiBarWidth)}${c.reset}`;
   const humanBar = `${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
 
   console.log(`  ${c.dim}${"─".repeat(70)}${c.reset}`);
   console.log(`  ${aiBar}${humanBar}`);
-  console.log(`  ${c.magenta}✨ AI: ${aiGenerated} (${aiPct}%)${c.reset}  ${c.dim}│${c.reset}  ${c.green}👤 Human: ${human} (${humanPct}%)${c.reset}`);
+  console.log(`  ${c.orange}✨ AI: ${aiGenerated} (${aiPct}%)${c.reset}  ${c.dim}│${c.reset}  ${c.green}👤 Human: ${human} (${humanPct}%)${c.reset}`);
   console.log("");
 }
 

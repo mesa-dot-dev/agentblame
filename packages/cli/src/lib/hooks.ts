@@ -384,7 +384,7 @@ on:
     types: [closed]
 
 jobs:
-  transfer-notes:
+  post-merge:
     # Only run if the PR was merged (not just closed)
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
@@ -412,8 +412,8 @@ jobs:
           git fetch origin --tags 2>/dev/null || echo "No tags to fetch"
           git fetch origin refs/pull/\${{ github.event.pull_request.number }}/head:refs/pull/\${{ github.event.pull_request.number }}/head 2>/dev/null || echo "Could not fetch PR head"
 
-      - name: Transfer notes and update analytics
-        run: bun \$(npm root -g)/@mesadev/agentblame/dist/transfer-notes.js
+      - name: Process merge (transfer notes + update analytics)
+        run: bun \$(npm root -g)/@mesadev/agentblame/dist/post-merge.js
         env:
           PR_NUMBER: \${{ github.event.pull_request.number }}
           PR_TITLE: \${{ github.event.pull_request.title }}
@@ -435,24 +435,17 @@ jobs:
 
 /**
  * Install GitHub Actions workflow for handling squash/rebase merges
+ * Always overwrites to ensure the latest version is installed
  */
 export async function installGitHubAction(repoRoot: string): Promise<boolean> {
   const workflowDir = path.join(repoRoot, ".github", "workflows");
   const workflowPath = path.join(workflowDir, "agentblame.yml");
 
   try {
-    // Check if workflow already exists
-    if (fs.existsSync(workflowPath)) {
-      const existing = await fs.promises.readFile(workflowPath, "utf8");
-      if (existing.includes("Agent Blame") || existing.includes("agentblame")) {
-        return true; // Already installed
-      }
-    }
-
     // Create workflows directory if it doesn't exist
     await fs.promises.mkdir(workflowDir, { recursive: true });
 
-    // Write the workflow file
+    // Always write the latest workflow file
     await fs.promises.writeFile(workflowPath, GITHUB_WORKFLOW_CONTENT, "utf8");
 
     return true;

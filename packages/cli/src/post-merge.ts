@@ -142,6 +142,9 @@ interface AttributionWithContent extends NoteAttribution {
 
 /**
  * Collect all attributions from PR commits, including original content
+ *
+ * The contentHash in attributions is the hash of the FIRST line in the range.
+ * We need to find that line in the commit's diff to extract the full content.
  */
 function collectPRAttributions(prCommits: string[]): {
   byHash: Map<string, NoteAttribution[]>;
@@ -154,11 +157,23 @@ function collectPRAttributions(prCommits: string[]): {
     const note = readNote(sha);
     if (!note?.attributions) continue;
 
-    // Get the commit's diff to extract original content
+    // Get the commit's diff with per-line hashes
     const hunks = getCommitHunks(sha);
-    const hunksByHash = new Map<string, string>();
+
+    // Build a map from per-line contentHash to line data
+    // Also build a map from path+lineNumber to content for range extraction
+    const linesByHash = new Map<string, { path: string; lineNumber: number; content: string }>();
+    const linesByLocation = new Map<string, string>();
+
     for (const hunk of hunks) {
-      hunksByHash.set(hunk.contentHash, hunk.content);
+      for (const line of hunk.lines) {
+        linesByHash.set(line.contentHash, {
+          path: hunk.path,
+          lineNumber: line.lineNumber,
+          content: line.content,
+        });
+        linesByLocation.set(`${hunk.path}:${line.lineNumber}`, line.content);
+      }
     }
 
     for (const attr of note.attributions) {
@@ -168,10 +183,24 @@ function collectPRAttributions(prCommits: string[]): {
       }
       byHash.get(hash)?.push(attr);
 
-      // Store with original content for containment matching
-      const content = hunksByHash.get(hash) || "";
-      if (content) {
-        withContent.push({ ...attr, originalContent: content });
+      // Extract the full content for this attribution range
+      // The contentHash is for the first line; we need to get all lines in the range
+      const rangeLines: string[] = [];
+      for (let lineNum = attr.startLine; lineNum <= attr.endLine; lineNum++) {
+        const lineContent = linesByLocation.get(`${attr.path}:${lineNum}`);
+        if (lineContent !== undefined) {
+          rangeLines.push(lineContent);
+        }
+      }
+
+      if (rangeLines.length > 0) {
+        withContent.push({ ...attr, originalContent: rangeLines.join("\n") });
+      } else {
+        // Fallback: try to find by hash (first line)
+        const lineData = linesByHash.get(hash);
+        if (lineData) {
+          withContent.push({ ...attr, originalContent: lineData.content });
+        }
       }
     }
   }
@@ -180,46 +209,56 @@ function collectPRAttributions(prCommits: string[]): {
 }
 
 /**
- * Get the diff of a commit and extract content hashes
+ * Line-level data from a diff
  */
-function getCommitHunks(sha: string): Array<{
+interface DiffLine {
+  lineNumber: number;
+  content: string;
+  contentHash: string;
+}
+
+/**
+ * Hunk with line-level data
+ */
+interface DiffHunk {
   path: string;
   startLine: number;
   endLine: number;
   content: string;
   contentHash: string;
-}> {
+  lines: DiffLine[];
+}
+
+/**
+ * Get the diff of a commit and extract content with per-line hashes
+ * This matches the behavior of lib/git/gitDiff.ts parseDiff()
+ */
+function getCommitHunks(sha: string): DiffHunk[] {
   const diff = run(`git diff-tree -p ${sha}`);
   if (!diff) return [];
 
-  const hunks: Array<{
-    path: string;
-    startLine: number;
-    endLine: number;
-    content: string;
-    contentHash: string;
-  }> = [];
+  const hunks: DiffHunk[] = [];
 
   let currentFile = "";
   let lineNumber = 0;
-  let addedLines: string[] = [];
+  let hunkLines: DiffLine[] = [];
   let startLine = 0;
 
   for (const line of diff.split("\n")) {
     // New file header
     if (line.startsWith("+++ b/")) {
       // Save previous hunk
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
-        const hash = computeHash(content);
+      if (hunkLines.length > 0 && currentFile) {
+        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
-          endLine: startLine + addedLines.length - 1,
+          endLine: startLine + hunkLines.length - 1,
           content,
-          contentHash: hash,
+          contentHash: computeHash(content),
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
       currentFile = line.slice(6);
       continue;
@@ -228,17 +267,17 @@ function getCommitHunks(sha: string): Array<{
     // Hunk header
     if (line.startsWith("@@")) {
       // Save previous hunk
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
-        const hash = computeHash(content);
+      if (hunkLines.length > 0 && currentFile) {
+        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
-          endLine: startLine + addedLines.length - 1,
+          endLine: startLine + hunkLines.length - 1,
           content,
-          contentHash: hash,
+          contentHash: computeHash(content),
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
 
       // Parse line number: @@ -old,count +new,count @@
@@ -252,10 +291,15 @@ function getCommitHunks(sha: string): Array<{
 
     // Added line
     if (line.startsWith("+") && !line.startsWith("+++")) {
-      if (addedLines.length === 0) {
+      if (hunkLines.length === 0) {
         startLine = lineNumber;
       }
-      addedLines.push(line.slice(1));
+      const content = line.slice(1);
+      hunkLines.push({
+        lineNumber,
+        content,
+        contentHash: computeHash(content),
+      });
       lineNumber++;
       continue;
     }
@@ -263,32 +307,32 @@ function getCommitHunks(sha: string): Array<{
     // Context or removed line
     if (!line.startsWith("-")) {
       // Save previous hunk if we hit a non-added line
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
-        const hash = computeHash(content);
+      if (hunkLines.length > 0 && currentFile) {
+        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
-          endLine: startLine + addedLines.length - 1,
+          endLine: startLine + hunkLines.length - 1,
           content,
-          contentHash: hash,
+          contentHash: computeHash(content),
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
       lineNumber++;
     }
   }
 
   // Save last hunk
-  if (addedLines.length > 0 && currentFile) {
-    const content = addedLines.join("\n");
-    const hash = computeHash(content);
+  if (hunkLines.length > 0 && currentFile) {
+    const content = hunkLines.map((l) => l.content).join("\n");
     hunks.push({
       path: currentFile,
       startLine,
-      endLine: startLine + addedLines.length - 1,
+      endLine: startLine + hunkLines.length - 1,
       content,
-      contentHash: hash,
+      contentHash: computeHash(content),
+      lines: hunkLines,
     });
   }
 
@@ -379,38 +423,54 @@ function handleSquashMerge(prCommits: string[]): void {
     `Found ${byHash.size} unique content hashes, ${withContent.length} with content`,
   );
 
-  // Get hunks from the squash commit
+  // Get hunks from the squash commit (with per-line hashes)
   const hunks = getCommitHunks(MERGE_SHA);
   log(`Squash commit has ${hunks.length} hunks`);
 
-  // Match attributions to hunks
+  // Build a map of per-line hashes in the squash commit
+  const squashLinesByHash = new Map<string, { path: string; lineNumber: number; content: string }>();
+  for (const hunk of hunks) {
+    for (const line of hunk.lines) {
+      squashLinesByHash.set(line.contentHash, {
+        path: hunk.path,
+        lineNumber: line.lineNumber,
+        content: line.content,
+      });
+    }
+  }
+
+  // Match attributions to squash commit
   const newAttributions: NoteAttribution[] = [];
   const matchedContentHashes = new Set<string>();
 
-  for (const hunk of hunks) {
-    // First try exact hash match
-    const attrs = byHash.get(hunk.contentHash);
-    if (attrs && attrs.length > 0) {
+  // First pass: exact line hash matches
+  for (const [hash, attrs] of byHash) {
+    const squashLine = squashLinesByHash.get(hash);
+    if (squashLine && attrs.length > 0) {
       const attr = attrs[0];
+      // For now, create single-line attribution
+      // TODO: could try to find consecutive matched lines and merge them
       newAttributions.push({
         ...attr,
-        path: hunk.path,
-        startLine: hunk.startLine,
-        endLine: hunk.endLine,
+        path: squashLine.path,
+        startLine: squashLine.lineNumber,
+        endLine: squashLine.lineNumber,
       });
-      matchedContentHashes.add(attr.contentHash);
+      matchedContentHashes.add(hash);
       log(
-        `  Exact match: ${hunk.path}:${hunk.startLine}-${hunk.endLine} (${attr.provider})`,
+        `  Line hash match: ${squashLine.path}:${squashLine.lineNumber} (${attr.provider})`,
       );
-      continue;
     }
+  }
 
-    // Fallback: check if any AI content is contained within this hunk
+  // Second pass: containment matching for multi-line attributions
+  for (const hunk of hunks) {
     const unmatchedAttrs = withContent.filter(
       (a) => !matchedContentHashes.has(a.contentHash),
     );
-    const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
+    if (unmatchedAttrs.length === 0) continue;
 
+    const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
     for (const match of containedMatches) {
       newAttributions.push(match);
       matchedContentHashes.add(match.contentHash);
@@ -422,16 +482,55 @@ function handleSquashMerge(prCommits: string[]): void {
     return;
   }
 
+  // Merge consecutive attributions with same provider
+  const mergedAttributions = mergeConsecutiveAttributions(newAttributions);
+
   // Write note to squash commit
   const note: GitNotesAttribution = {
     version: 2,
     timestamp: new Date().toISOString(),
-    attributions: newAttributions,
+    attributions: mergedAttributions,
   };
 
   if (writeNote(MERGE_SHA, note)) {
-    log(`✓ Attached ${newAttributions.length} attribution(s) to squash commit`);
+    log(`✓ Attached ${mergedAttributions.length} attribution(s) to squash commit`);
   }
+}
+
+/**
+ * Merge consecutive attributions with the same provider into ranges
+ */
+function mergeConsecutiveAttributions(attrs: NoteAttribution[]): NoteAttribution[] {
+  if (attrs.length === 0) return [];
+
+  // Sort by path, then by startLine
+  const sorted = [...attrs].sort((a, b) => {
+    if (a.path !== b.path) return a.path.localeCompare(b.path);
+    return a.startLine - b.startLine;
+  });
+
+  const merged: NoteAttribution[] = [];
+  let current = { ...sorted[0] };
+
+  for (let i = 1; i < sorted.length; i++) {
+    const next = sorted[i];
+    // Check if consecutive and same provider
+    if (
+      current.path === next.path &&
+      current.endLine >= next.startLine - 1 &&
+      current.provider === next.provider
+    ) {
+      // Merge: extend the range
+      current.endLine = Math.max(current.endLine, next.endLine);
+      current.confidence = Math.min(current.confidence, next.confidence);
+    } else {
+      merged.push(current);
+      current = { ...next };
+    }
+  }
+  merged.push(current);
+
+  return merged;
 }
 
 /**
@@ -460,27 +559,40 @@ function handleRebaseMerge(prCommits: string[]): void {
     const newAttributions: NoteAttribution[] = [];
     const matchedContentHashes = new Set<string>();
 
+    // Build a map of per-line hashes for this commit
+    const linesByHash = new Map<string, { path: string; lineNumber: number }>();
     for (const hunk of hunks) {
-      // First try exact hash match
-      const attrs = byHash.get(hunk.contentHash);
-      if (attrs && attrs.length > 0) {
+      for (const line of hunk.lines) {
+        linesByHash.set(line.contentHash, {
+          path: hunk.path,
+          lineNumber: line.lineNumber,
+        });
+      }
+    }
+
+    // First pass: exact line hash matches
+    for (const [hash, attrs] of byHash) {
+      const lineInfo = linesByHash.get(hash);
+      if (lineInfo && attrs.length > 0) {
         const attr = attrs[0];
         newAttributions.push({
           ...attr,
-          path: hunk.path,
-          startLine: hunk.startLine,
-          endLine: hunk.endLine,
+          path: lineInfo.path,
+          startLine: lineInfo.lineNumber,
+          endLine: lineInfo.lineNumber,
         });
-        matchedContentHashes.add(attr.contentHash);
-        continue;
+        matchedContentHashes.add(hash);
       }
+    }
 
-      // Fallback: containment matching
+    // Second pass: containment matching
+    for (const hunk of hunks) {
       const unmatchedAttrs = withContent.filter(
         (a) => !matchedContentHashes.has(a.contentHash),
       );
-      const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
+      if (unmatchedAttrs.length === 0) continue;
 
+      const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
       for (const match of containedMatches) {
         newAttributions.push(match);
         matchedContentHashes.add(match.contentHash);
@@ -488,16 +600,18 @@ function handleRebaseMerge(prCommits: string[]): void {
     }
 
     if (newAttributions.length > 0) {
+      // Merge consecutive attributions
+      const merged = mergeConsecutiveAttributions(newAttributions);
       const note: GitNotesAttribution = {
         version: 2,
         timestamp: new Date().toISOString(),
-        attributions: newAttributions,
+        attributions: merged,
       };
       if (writeNote(newSha, note)) {
         log(
-          `  ✓ ${newSha.slice(0, 7)}: ${newAttributions.length} attribution(s)`,
+          `  ✓ ${newSha.slice(0, 7)}: ${merged.length} attribution(s)`,
         );
-        totalTransferred += newAttributions.length;
+        totalTransferred += merged.length;
       }
     }
   }

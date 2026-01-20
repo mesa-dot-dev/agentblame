@@ -2,7 +2,7 @@
   "name": "agentblame",
   "displayName": "Agent Blame",
   "description": "Track AI-generated vs human-written code. Provides git notes storage, CLI, and GitHub PR attribution.",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
@@ -27,7 +27,7 @@
     "ab:blame": "bun run packages/cli/src/index.ts blame",
     "ab:sync": "bun run packages/cli/src/index.ts sync",
     "ab:status": "bun run packages/cli/src/index.ts status",
-    "ab:transfer-notes": "bun run packages/cli/src/transfer-notes.ts",
+    "ab:post-merge": "bun run packages/cli/src/post-merge.ts",
     "ab:capture": "bun run packages/cli/src/capture.ts",
     "cleanup": "bun run packages/cli/src/cleanup.ts",
     "logs:clear": "rm -f ~/.agentblame/logs/*.log && echo 'Logs cleared.'"

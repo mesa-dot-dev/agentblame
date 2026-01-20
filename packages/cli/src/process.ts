@@ -11,6 +11,7 @@ import {
   getCommitMoves,
   buildMoveIndex,
   attachNote,
+  fetchNotesQuiet,
   getAgentBlameDirForRepo,
   type RangeAttribution,
   type LineAttribution,
@@ -32,7 +33,7 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  magenta: "\x1b[35m",
+  orange: "\x1b[38;5;166m", // Mesa Orange - matches gutter color
   blue: "\x1b[34m",
 };
 
@@ -236,6 +237,9 @@ export async function runProcess(sha?: string): Promise<void> {
   const agentblameDir = getAgentBlameDirForRepo(repoRoot);
   setAgentBlameDir(agentblameDir);
 
+  // Fetch remote notes first to avoid push conflicts
+  await fetchNotesQuiet(repoRoot);
+
   // Always resolve to actual SHA (not HEAD)
   let commitSha = sha || "HEAD";
   const resolveResult = await runGit(repoRoot, ["rev-parse", commitSha]);
@@ -289,7 +293,7 @@ export async function runProcess(sha?: string): Promise<void> {
       const model = attr.model && attr.model !== "claude" ? attr.model : "";
       const modelStr = model ? ` - ${model}` : "";
       const visibleText = `    ${attr.path}:${attr.startLine}-${attr.endLine} [${provider}${modelStr}]`;
-      const coloredText = `    ${c.blue}${attr.path}:${attr.startLine}-${attr.endLine}${c.reset} ${c.magenta}[${provider}${modelStr}]${c.reset}`;
+      const coloredText = `    ${c.blue}${attr.path}:${attr.startLine}-${attr.endLine}${c.reset} ${c.orange}[${provider}${modelStr}]${c.reset}`;
       console.log(`${border}${padRight(coloredText, visibleText.length)}${border}`);
     }
     console.log(`${c.dim}├${"─".repeat(WIDTH - 2)}┤${c.reset}`);
@@ -304,11 +308,11 @@ export async function runProcess(sha?: string): Promise<void> {
   console.log(`${border}${padRight(summaryHeader, summaryHeader.length)}${border}`);
 
   const barVisible = `  ${"█".repeat(aiBarWidth)}${"░".repeat(humanBarWidth)}`;
-  const barColored = `  ${c.magenta}${"█".repeat(aiBarWidth)}${c.reset}${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
+  const barColored = `  ${c.orange}${"█".repeat(aiBarWidth)}${c.reset}${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
   console.log(`${border}${padRight(barColored, barVisible.length)}${border}`);
 
   const statsVisible = `  AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)    Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)`;
-  const statsColored = `  ${c.magenta}AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
+  const statsColored = `  ${c.orange}AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
   console.log(`${border}${padRight(statsColored, statsVisible.length)}${border}`);
 
   console.log(`${c.dim}└${"─".repeat(WIDTH - 2)}┘${c.reset}`);

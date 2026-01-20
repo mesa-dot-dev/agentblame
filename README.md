@@ -242,7 +242,7 @@ agentblame/
 │   │       ├── capture.ts
 │   │       ├── blame.ts
 │   │       ├── sync.ts
-│   │       ├── transfer-notes.ts
+│   │       ├── post-merge.ts
 │   │       └── index.ts
 │   └── chrome/           # Chrome extension
 └── docs/                 # Documentation
