@@ -17,11 +17,11 @@ export interface GitNotesAttribution {
 
 export interface AttributionEntry {
   path: string;
-  start_line: number;
-  end_line: number;
-  content_hash: string;
-  content_hash_normalized: string;
-  category: "ai_generated"; // Only ai_generated, no ai_assisted
+  startLine: number;
+  endLine: number;
+  contentHash: string;
+  matchType: string;
+  category: "ai_generated";
   provider: string;
   model: string | null;
   confidence: number;

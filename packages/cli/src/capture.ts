@@ -26,20 +26,20 @@ import { findAgentBlameDir } from "./lib/util";
 interface CapturedLine {
   content: string;
   hash: string;
-  hash_normalized: string;
+  hashNormalized: string;
 }
 
 interface CapturedEdit {
   timestamp: string;
-  provider: "cursor" | "claude_code";
-  file_path: string;
+  provider: "cursor" | "claudeCode";
+  filePath: string;
   model: string | null;
   lines: CapturedLine[];
   content: string;
-  content_hash: string;
-  content_hash_normalized: string;
-  edit_type: "addition" | "modification" | "replacement";
-  old_content?: string;
+  contentHash: string;
+  contentHashNormalized: string;
+  editType: "addition" | "modification" | "replacement";
+  oldContent?: string;
 }
 
 interface CursorPayload {
@@ -130,7 +130,7 @@ function hashLines(content: string): CapturedLine[] {
     result.push({
       content: line,
       hash: computeHash(line),
-      hash_normalized: computeNormalizedHash(line),
+      hashNormalized: computeNormalizedHash(line),
     });
   }
 
@@ -166,13 +166,13 @@ function saveEdit(edit: CapturedEdit): void {
   insertEdit({
     timestamp: edit.timestamp,
     provider: edit.provider,
-    file_path: edit.file_path,
+    filePath: edit.filePath,
     model: edit.model,
     content: edit.content,
-    content_hash: edit.content_hash,
-    content_hash_normalized: edit.content_hash_normalized,
-    edit_type: edit.edit_type,
-    old_content: edit.old_content,
+    contentHash: edit.contentHash,
+    contentHashNormalized: edit.contentHashNormalized,
+    editType: edit.editType,
+    oldContent: edit.oldContent,
     lines: edit.lines,
   });
 }
@@ -211,7 +211,7 @@ function processCursorPayload(
     edits.push({
       timestamp,
       provider: "cursor",
-      file_path: payload.file_path,
+      filePath: payload.file_path,
       model: payload.model || null,
 
       // Line-level data
@@ -219,12 +219,12 @@ function processCursorPayload(
 
       // Aggregate data
       content: addedContent,
-      content_hash: computeHash(addedContent),
-      content_hash_normalized: computeNormalizedHash(addedContent),
+      contentHash: computeHash(addedContent),
+      contentHashNormalized: computeNormalizedHash(addedContent),
 
       // Edit context
-      edit_type: determineEditType(oldString, newString),
-      old_content: oldString || undefined,
+      editType: determineEditType(oldString, newString),
+      oldContent: oldString || undefined,
     });
   }
 
@@ -255,8 +255,8 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
 
     edits.push({
       timestamp,
-      provider: "claude_code",
-      file_path: filePath,
+      provider: "claudeCode",
+      filePath: filePath,
       model: "claude",
 
       // Line-level data
@@ -264,11 +264,11 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
 
       // Aggregate data
       content: content,
-      content_hash: computeHash(content),
-      content_hash_normalized: computeNormalizedHash(content),
+      contentHash: computeHash(content),
+      contentHashNormalized: computeNormalizedHash(content),
 
       // Edit context
-      edit_type: "addition",
+      editType: "addition",
     });
     return edits;
   }
@@ -284,8 +284,8 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
 
   edits.push({
     timestamp,
-    provider: "claude_code",
-    file_path: filePath,
+    provider: "claudeCode",
+    filePath: filePath,
     model: "claude",
 
     // Line-level data
@@ -293,12 +293,12 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
 
     // Aggregate data
     content: addedContent,
-    content_hash: computeHash(addedContent),
-    content_hash_normalized: computeNormalizedHash(addedContent),
+    contentHash: computeHash(addedContent),
+    contentHashNormalized: computeNormalizedHash(addedContent),
 
     // Edit context
-    edit_type: determineEditType(oldString, newString),
-    old_content: oldString || undefined,
+    editType: determineEditType(oldString, newString),
+    oldContent: oldString || undefined,
   });
 
   return edits;
@@ -344,7 +344,7 @@ export async function runCapture(): Promise<void> {
     // Save all edits to SQLite database
     for (const edit of edits) {
       // Find the agentblame directory for this file
-      const agentblameDir = findAgentBlameDir(edit.file_path);
+      const agentblameDir = findAgentBlameDir(edit.filePath);
       if (!agentblameDir) {
         // File is not in an initialized repo, skip silently
         continue;

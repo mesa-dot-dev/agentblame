@@ -11,6 +11,7 @@ import {
   getCommitMoves,
   buildMoveIndex,
   attachNote,
+  fetchNotesQuiet,
   getAgentBlameDirForRepo,
   type RangeAttribution,
   type LineAttribution,
@@ -32,7 +33,7 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  magenta: "\x1b[35m",
+  orange: "\x1b[38;5;166m", // Mesa Orange - matches gutter color
   blue: "\x1b[34m",
 };
 
@@ -78,11 +79,11 @@ function mergeConsecutiveLines(lines: LineAttribution[]): RangeAttribution[] {
     if (
       currentRange &&
       currentRange.path === line.path &&
-      currentRange.end_line === line.line - 1 &&
+      currentRange.endLine === line.line - 1 &&
       currentRange.provider === line.provider &&
-      currentRange.match_type === line.match_type
+      currentRange.matchType === line.matchType
     ) {
-      currentRange.end_line = line.line;
+      currentRange.endLine = line.line;
       currentRange.confidence = Math.min(currentRange.confidence, line.confidence);
     } else {
       if (currentRange) {
@@ -90,13 +91,13 @@ function mergeConsecutiveLines(lines: LineAttribution[]): RangeAttribution[] {
       }
       currentRange = {
         path: line.path,
-        start_line: line.line,
-        end_line: line.line,
+        startLine: line.line,
+        endLine: line.line,
         provider: line.provider,
         model: line.model,
         confidence: line.confidence,
-        match_type: line.match_type,
-        content_hash: line.content_hash,
+        matchType: line.matchType,
+        contentHash: line.contentHash,
       };
     }
   }
@@ -137,13 +138,13 @@ async function matchCommit(
       let match = findLineMatch(
         line.content,
         line.hash,
-        line.hash_normalized,
+        line.hashNormalized,
         hunk.path
       );
 
       // If no direct match, check for moved code
       if (!match) {
-        const moveKey = `${hunk.path}:${line.line_number}`;
+        const moveKey = `${hunk.path}:${line.lineNumber}`;
         const moveInfo = moveIndex.get(moveKey);
 
         if (moveInfo) {
@@ -152,12 +153,12 @@ async function matchCommit(
           if (originalMatch) {
             lineAttributions.push({
               path: hunk.path,
-              line: line.line_number,
-              provider: originalMatch.provider as "cursor" | "claude_code",
+              line: line.lineNumber,
+              provider: originalMatch.provider as "cursor" | "claudeCode",
               model: originalMatch.model,
               confidence: 0.85,
-              match_type: "move_detected",
-              content_hash: line.hash,
+              matchType: "move_detected",
+              contentHash: line.hash,
             });
 
             // Track for marking as matched
@@ -172,12 +173,12 @@ async function matchCommit(
       if (match) {
         lineAttributions.push({
           path: hunk.path,
-          line: line.line_number,
+          line: line.lineNumber,
           provider: match.edit.provider,
           model: match.edit.model,
           confidence: match.confidence,
-          match_type: match.matchType,
-          content_hash: line.hash,
+          matchType: match.matchType,
+          contentHash: line.hash,
         });
 
         // Track edit ID for marking as matched
@@ -200,8 +201,8 @@ async function matchCommit(
   return {
     sha,
     attributions: rangeAttributions,
-    unmatched_lines: unmatchedLines,
-    total_lines: totalLines,
+    unmatchedLines,
+    totalLines,
   };
 }
 
@@ -236,6 +237,9 @@ export async function runProcess(sha?: string): Promise<void> {
   const agentblameDir = getAgentBlameDirForRepo(repoRoot);
   setAgentBlameDir(agentblameDir);
 
+  // Fetch remote notes first to avoid push conflicts
+  await fetchNotesQuiet(repoRoot);
+
   // Always resolve to actual SHA (not HEAD)
   let commitSha = sha || "HEAD";
   const resolveResult = await runGit(repoRoot, ["rev-parse", commitSha]);
@@ -248,9 +252,9 @@ export async function runProcess(sha?: string): Promise<void> {
   const result = await processCommit(repoRoot, commitSha);
 
   // Calculate stats
-  const aiLines = result.total_lines - result.unmatched_lines;
-  const humanLines = result.unmatched_lines;
-  const aiPercent = result.total_lines > 0 ? Math.round((aiLines / result.total_lines) * 100) : 0;
+  const aiLines = result.totalLines - result.unmatchedLines;
+  const humanLines = result.unmatchedLines;
+  const aiPercent = result.totalLines > 0 ? Math.round((aiLines / result.totalLines) * 100) : 0;
   const humanPercent = 100 - aiPercent;
 
   const WIDTH = 72;
@@ -288,8 +292,8 @@ export async function runProcess(sha?: string): Promise<void> {
       const provider = attr.provider === "cursor" ? "Cursor" : "Claude";
       const model = attr.model && attr.model !== "claude" ? attr.model : "";
       const modelStr = model ? ` - ${model}` : "";
-      const visibleText = `    ${attr.path}:${attr.start_line}-${attr.end_line} [${provider}${modelStr}]`;
-      const coloredText = `    ${c.blue}${attr.path}:${attr.start_line}-${attr.end_line}${c.reset} ${c.magenta}[${provider}${modelStr}]${c.reset}`;
+      const visibleText = `    ${attr.path}:${attr.startLine}-${attr.endLine} [${provider}${modelStr}]`;
+      const coloredText = `    ${c.blue}${attr.path}:${attr.startLine}-${attr.endLine}${c.reset} ${c.orange}[${provider}${modelStr}]${c.reset}`;
       console.log(`${border}${padRight(coloredText, visibleText.length)}${border}`);
     }
     console.log(`${c.dim}├${"─".repeat(WIDTH - 2)}┤${c.reset}`);
@@ -304,11 +308,11 @@ export async function runProcess(sha?: string): Promise<void> {
   console.log(`${border}${padRight(summaryHeader, summaryHeader.length)}${border}`);
 
   const barVisible = `  ${"█".repeat(aiBarWidth)}${"░".repeat(humanBarWidth)}`;
-  const barColored = `  ${c.magenta}${"█".repeat(aiBarWidth)}${c.reset}${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
+  const barColored = `  ${c.orange}${"█".repeat(aiBarWidth)}${c.reset}${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
   console.log(`${border}${padRight(barColored, barVisible.length)}${border}`);
 
   const statsVisible = `  AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)    Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)`;
-  const statsColored = `  ${c.magenta}AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
+  const statsColored = `  ${c.orange}AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
   console.log(`${border}${padRight(statsColored, statsVisible.length)}${border}`);
 
   console.log(`${c.dim}└${"─".repeat(WIDTH - 2)}┘${c.reset}`);

@@ -24,7 +24,7 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  magenta: "\x1b[35m",
+  orange: "\x1b[38;5;166m", // Mesa Orange - matches gutter color
   blue: "\x1b[34m",
   gray: "\x1b[90m",
 };
@@ -115,7 +115,7 @@ export async function blame(
       if (!pathMatches) return false;
 
       // Check if original line number (at commit time) is within the attribution range
-      return line.origLine >= a.start_line && line.origLine <= a.end_line;
+      return line.origLine >= a.startLine && line.origLine <= a.endLine;
     });
     return { line, attribution: attr || null };
   });
@@ -156,7 +156,7 @@ function outputFormatted(lines: LineAttribution[], filePath: string): void {
       const model = attribution.model && attribution.model !== "claude" ? attribution.model : "";
       const label = model ? `${provider} - ${model}` : provider;
       visibleLen = label.length + 3; // +2 for emoji (renders 2-wide) + 1 space
-      attrInfo = `${c.magenta}✨ ${label}${c.reset}`;
+      attrInfo = `${c.orange}✨ ${label}${c.reset}`;
     }
 
     const attrPadded = attribution
@@ -181,12 +181,12 @@ function outputFormatted(lines: LineAttribution[], filePath: string): void {
   const barWidth = 40;
   const aiBarWidth = Math.round((aiPct / 100) * barWidth);
   const humanBarWidth = barWidth - aiBarWidth;
-  const aiBar = `${c.magenta}${"█".repeat(aiBarWidth)}${c.reset}`;
+  const aiBar = `${c.orange}${"█".repeat(aiBarWidth)}${c.reset}`;
   const humanBar = `${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
 
   console.log(`  ${c.dim}${"─".repeat(70)}${c.reset}`);
   console.log(`  ${aiBar}${humanBar}`);
-  console.log(`  ${c.magenta}✨ AI: ${aiGenerated} (${aiPct}%)${c.reset}  ${c.dim}│${c.reset}  ${c.green}👤 Human: ${human} (${humanPct}%)${c.reset}`);
+  console.log(`  ${c.orange}✨ AI: ${aiGenerated} (${aiPct}%)${c.reset}  ${c.dim}│${c.reset}  ${c.green}👤 Human: ${human} (${humanPct}%)${c.reset}`);
   console.log("");
 }
 
@@ -217,7 +217,7 @@ function outputSummary(lines: LineAttribution[], filePath: string): void {
       const provider = attribution.provider;
       providers.set(provider, (providers.get(provider) || 0) + 1);
 
-      const matchType = attribution.match_type;
+      const matchType = attribution.matchType;
       matchTypes.set(matchType, (matchTypes.get(matchType) || 0) + 1);
     }
   }
@@ -258,8 +258,8 @@ function outputJson(lines: LineAttribution[], filePath: string): void {
             category: attribution.category,
             provider: attribution.provider,
             model: attribution.model,
-            match_type: attribution.match_type,
-            content_hash: attribution.content_hash,
+            matchType: attribution.matchType,
+            contentHash: attribution.contentHash,
           }
         : null,
     })),

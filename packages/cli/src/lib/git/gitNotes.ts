@@ -18,18 +18,18 @@ export async function attachNote(
   attributions: RangeAttribution[]
 ): Promise<boolean> {
   const note: GitNotesAttribution = {
-    version: 1,
+    version: 2,
     timestamp: new Date().toISOString(),
     attributions: attributions.map((a) => ({
       path: a.path,
-      start_line: a.start_line,
-      end_line: a.end_line,
+      startLine: a.startLine,
+      endLine: a.endLine,
       category: "ai_generated",
       provider: a.provider,
       model: a.model,
       confidence: a.confidence,
-      match_type: a.match_type,
-      content_hash: a.content_hash,
+      matchType: a.matchType,
+      contentHash: a.contentHash,
     })),
   };
 

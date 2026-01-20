@@ -1,0 +1,80 @@
+/**
+ * Agent Blame Analytics Styles
+ *
+ * Minimal custom styles for the analytics overlay.
+ * Most styling uses GitHub's Primer CSS classes.
+ */
+
+/* Chart line animation */
+@keyframes agentblame-draw-line {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.agentblame-chart-line {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: agentblame-draw-line 1s ease-out forwards;
+}
+
+/* Skeleton loading animation */
+@keyframes agentblame-skeleton-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.agentblame-skeleton {
+  animation: agentblame-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Overlay backdrop */
+.agentblame-overlay-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Modal container */
+.agentblame-modal {
+  background: var(--color-canvas-default, #ffffff);
+  border-radius: 12px;
+  max-width: 680px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* Chart container */
+.agentblame-chart-container {
+  width: 100%;
+  aspect-ratio: 2 / 1;
+}
+
+/* Progress bar styles */
+.agentblame-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--color-neutral-muted, #e1e4e8);
+}
+
+.agentblame-progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}

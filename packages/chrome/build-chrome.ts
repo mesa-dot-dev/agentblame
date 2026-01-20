@@ -42,6 +42,7 @@ function copyStatic(): void {
 
   // Copy content CSS
   copyFileSync(join(SRC_DIR, "content", "content.css"), join(DIST_DIR, "content", "content.css"));
+  copyFileSync(join(SRC_DIR, "content", "chart.css"), join(DIST_DIR, "content", "chart.css"));
 
   // Copy icons (if they exist)
   const iconsDir = join(SRC_DIR, "icons");
@@ -81,6 +82,18 @@ async function bundle(): Promise<void> {
     sourcemap: true,
   });
   console.log("✓ Bundled content.js");
+
+  // Bundle analytics entry script (for repo pages)
+  await build({
+    entryPoints: [join(SRC_DIR, "content", "analytics-entry.ts")],
+    bundle: true,
+    outfile: join(DIST_DIR, "content", "analytics-entry.js"),
+    format: "iife",
+    target: "chrome100",
+    minify: false,
+    sourcemap: true,
+  });
+  console.log("✓ Bundled analytics-entry.js");
 
   // Bundle background service worker
   await build({

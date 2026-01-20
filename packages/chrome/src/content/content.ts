@@ -226,7 +226,7 @@ function buildAttributionMap(
 
     for (const attr of note.attributions) {
       // Add entry for each line in the range
-      for (let line = attr.start_line; line <= attr.end_line; line++) {
+      for (let line = attr.startLine; line <= attr.endLine; line++) {
         const key = `${attr.path}:${line}`;
         map.set(key, {
           category: attr.category,

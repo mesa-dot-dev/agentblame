@@ -27,6 +27,7 @@ import {
   uninstallGitHook,
   uninstallGitHubAction,
   getRepoRoot,
+  runGit,
   configureNotesSync,
   removeNotesSync,
   initDatabase,
@@ -36,6 +37,8 @@ import {
   getRecentPendingEdits,
   cleanupOldEntries,
 } from "./lib";
+
+const ANALYTICS_TAG = "agentblame-analytics-anchor";
 
 /**
  * Check if Bun is installed and available in PATH.
@@ -110,6 +113,45 @@ Examples:
   agentblame init
   agentblame blame src/index.ts
 `);
+}
+
+/**
+ * Create the analytics anchor tag on the root commit.
+ * This tag is used to store repository-wide analytics.
+ */
+async function createAnalyticsTag(repoRoot: string): Promise<boolean> {
+  try {
+    // Check if tag already exists
+    const existingTag = await runGit(repoRoot, ["tag", "-l", ANALYTICS_TAG], 5000);
+    if (existingTag.stdout.trim()) {
+      // Tag already exists
+      return true;
+    }
+
+    // Get the root commit(s)
+    const rootResult = await runGit(repoRoot, ["rev-list", "--max-parents=0", "HEAD"], 10000);
+    if (rootResult.exitCode !== 0 || !rootResult.stdout.trim()) {
+      return false;
+    }
+
+    const rootLines = rootResult.stdout.trim().split("\n").filter(Boolean);
+    if (rootLines.length === 0) {
+      return false;
+    }
+
+    // Use the first root commit
+    const rootSha = rootLines[0];
+
+    // Create the tag
+    const tagResult = await runGit(repoRoot, ["tag", ANALYTICS_TAG, rootSha], 5000);
+    if (tagResult.exitCode !== 0) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -271,6 +313,10 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   const githubActionSuccess = await installGitHubAction(repoRoot);
   results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
 
+  // Create analytics anchor tag
+  const analyticsTagSuccess = await createAnalyticsTag(repoRoot);
+  results.push({ name: "Analytics anchor tag", success: analyticsTagSuccess });
+
   // Print results
   console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
   console.log("");
@@ -298,11 +344,12 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   console.log("");
   console.log("  \x1b[1mNext steps:\x1b[0m");
   console.log("  \x1b[33m1.\x1b[0m Restart Cursor or Claude Code");
-  console.log("  \x1b[33m2.\x1b[0m Make AI edits and commit your changes");
-  console.log("  \x1b[33m3.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution");
+  console.log("  \x1b[33m2.\x1b[0m Push the analytics tag: \x1b[36mgit push origin agentblame-analytics-anchor\x1b[0m");
+  console.log("  \x1b[33m3.\x1b[0m Make AI edits and commit your changes");
+  console.log("  \x1b[33m4.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution");
   console.log("");
   console.log("  \x1b[2mWorkflow created at:\x1b[0m .github/workflows/agentblame.yml");
-  console.log("  \x1b[2mCommit this file to enable squash/rebase merge support.\x1b[0m");
+  console.log("  \x1b[2mCommit this file to enable squash/rebase merge support and analytics.\x1b[0m");
   console.log("");
 }
 
@@ -458,7 +505,7 @@ async function runStatus(): Promise<void> {
     const recent = getRecentPendingEdits(5);
     for (const edit of recent) {
       const time = new Date(edit.timestamp).toLocaleTimeString();
-      const file = edit.file_path.split("/").pop();
+      const file = edit.filePath.split("/").pop();
       console.log(`  [${edit.provider}] ${file} at ${time}`);
     }
 

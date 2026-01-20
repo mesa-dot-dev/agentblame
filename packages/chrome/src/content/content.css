@@ -98,7 +98,7 @@
 }
 
 .ab-stat-ai .ab-stat-value {
-  color: var(--fgColor-accent, var(--color-accent-fg, #0969da));
+  color: var(--ab-ai-color);
 }
 
 .ab-stat-human .ab-stat-value {
@@ -205,7 +205,7 @@
   }
 
   .ab-stat-ai .ab-stat-value {
-    color: var(--fgColor-accent, #58a6ff);
+    color: var(--ab-ai-color);
   }
 
   .ab-stat-human .ab-stat-value {
