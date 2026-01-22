@@ -36,6 +36,9 @@ export interface DbLine {
   content: string;
   hash: string;
   hashNormalized: string;
+  lineNumber: number | null;
+  contextBefore: string | null;
+  contextAfter: string | null;
 }
 
 export interface LineMatchResult {
@@ -64,7 +67,9 @@ CREATE TABLE IF NOT EXISTS edits (
     old_content TEXT,
     status TEXT DEFAULT 'pending',
     matched_commit TEXT,
-    matched_at TEXT
+    matched_at TEXT,
+    session_id TEXT,
+    tool_use_id TEXT
 );
 
 -- Lines table (one row per line in an edit)
@@ -74,15 +79,20 @@ CREATE TABLE IF NOT EXISTS lines (
     content TEXT NOT NULL,
     hash TEXT NOT NULL,
     hash_normalized TEXT NOT NULL,
+    line_number INTEGER,
+    context_before TEXT,
+    context_after TEXT,
     FOREIGN KEY (edit_id) REFERENCES edits(id) ON DELETE CASCADE
 );
 
 -- Indexes for fast lookup
 CREATE INDEX IF NOT EXISTS idx_lines_hash ON lines(hash);
 CREATE INDEX IF NOT EXISTS idx_lines_hash_normalized ON lines(hash_normalized);
+CREATE INDEX IF NOT EXISTS idx_lines_line_number ON lines(line_number);
 CREATE INDEX IF NOT EXISTS idx_edits_status ON edits(status);
 CREATE INDEX IF NOT EXISTS idx_edits_file_path ON edits(file_path);
 CREATE INDEX IF NOT EXISTS idx_edits_content_hash ON edits(content_hash);
+CREATE INDEX IF NOT EXISTS idx_edits_session_id ON edits(session_id);
 `;
 
 // =============================================================================
@@ -189,6 +199,8 @@ export interface InsertEditParams {
   editType: string;
   oldContent?: string;
   lines: CapturedLine[];
+  sessionId?: string;
+  toolUseId?: string;
 }
 
 /**
@@ -200,8 +212,9 @@ export function insertEdit(params: InsertEditParams): number {
   const editStmt = db.prepare(`
     INSERT INTO edits (
       timestamp, provider, file_path, model, content,
-      content_hash, content_hash_normalized, edit_type, old_content
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      content_hash, content_hash_normalized, edit_type, old_content,
+      session_id, tool_use_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = editStmt.run(
@@ -213,19 +226,29 @@ export function insertEdit(params: InsertEditParams): number {
     params.contentHash,
     params.contentHashNormalized,
     params.editType,
-    params.oldContent || null
+    params.oldContent || null,
+    params.sessionId || null,
+    params.toolUseId || null
   );
 
   const editId = Number(result.lastInsertRowid);
 
-  // Insert lines
+  // Insert lines with line numbers and context
   const lineStmt = db.prepare(`
-    INSERT INTO lines (edit_id, content, hash, hash_normalized)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO lines (edit_id, content, hash, hash_normalized, line_number, context_before, context_after)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const line of params.lines) {
-    lineStmt.run(editId, line.content, line.hash, line.hashNormalized);
+    lineStmt.run(
+      editId,
+      line.content,
+      line.hash,
+      line.hashNormalized,
+      line.lineNumber || null,
+      line.contextBefore || null,
+      line.contextAfter || null
+    );
   }
 
   return editId;
@@ -249,7 +272,7 @@ export function findByExactHash(
   const sameFileStmt = db.prepare(`
     SELECT
       l.id as line_id, l.edit_id, l.content as line_content,
-      l.hash, l.hash_normalized,
+      l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
       e.*
     FROM lines l
     JOIN edits e ON l.edit_id = e.id
@@ -270,7 +293,7 @@ export function findByExactHash(
     const anyStmt = db.prepare(`
       SELECT
         l.id as line_id, l.edit_id, l.content as line_content,
-        l.hash, l.hash_normalized,
+        l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
         e.*
       FROM lines l
       JOIN edits e ON l.edit_id = e.id
@@ -291,6 +314,9 @@ export function findByExactHash(
       content: row.line_content,
       hash: row.hash,
       hashNormalized: row.hash_normalized,
+      lineNumber: row.line_number,
+      contextBefore: row.context_before,
+      contextAfter: row.context_after,
     },
     matchType: "exact_hash",
     confidence: 1.0,
@@ -312,7 +338,7 @@ export function findByNormalizedHash(
   const sameFileStmt = db.prepare(`
     SELECT
       l.id as line_id, l.edit_id, l.content as line_content,
-      l.hash, l.hash_normalized,
+      l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
       e.*
     FROM lines l
     JOIN edits e ON l.edit_id = e.id
@@ -331,7 +357,7 @@ export function findByNormalizedHash(
     const anyStmt = db.prepare(`
       SELECT
         l.id as line_id, l.edit_id, l.content as line_content,
-        l.hash, l.hash_normalized,
+        l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
         e.*
       FROM lines l
       JOIN edits e ON l.edit_id = e.id
@@ -352,6 +378,9 @@ export function findByNormalizedHash(
       content: row.line_content,
       hash: row.hash,
       hashNormalized: row.hash_normalized,
+      lineNumber: row.line_number,
+      contextBefore: row.context_before,
+      contextAfter: row.context_after,
     },
     matchType: "normalized_hash",
     confidence: 0.95,
@@ -390,70 +419,19 @@ export function getEditLines(editId: number): DbLine[] {
     content: row.content,
     hash: row.hash,
     hashNormalized: row.hash_normalized,
+    lineNumber: row.line_number,
+    contextBefore: row.context_before,
+    contextAfter: row.context_after,
   }));
 }
 
 /**
- * Find match using substring containment (Strategy 3 & 4)
- * Only called when hash matches fail
- */
-export function findBySubstring(
-  lineContent: string,
-  filePath: string
-): LineMatchResult | null {
-  const normalizedLine = lineContent.trim();
-
-  // Skip trivial lines
-  if (normalizedLine.length <= 10) return null;
-
-  const edits = findEditsByFile(filePath);
-
-  // Strategy 3: Line contained in AI edit content
-  for (const edit of edits) {
-    if (edit.content.includes(normalizedLine)) {
-      return {
-        edit,
-        line: {
-          id: 0,
-          editId: edit.id,
-          content: normalizedLine,
-          hash: "",
-          hashNormalized: "",
-        },
-        matchType: "line_in_ai_content",
-        confidence: 0.9,
-      };
-    }
-  }
-
-  // Strategy 4: AI content contained in line
-  for (const edit of edits) {
-    const lines = getEditLines(edit.id);
-    for (const aiLine of lines) {
-      const trimmedAiLine = aiLine.content.trim();
-      if (trimmedAiLine.length > 10 && normalizedLine.includes(trimmedAiLine)) {
-        const ratio = trimmedAiLine.length / normalizedLine.length;
-        if (ratio > 0.5) {
-          return {
-            edit,
-            line: aiLine,
-            matchType: "ai_content_in_line",
-            confidence: 0.85,
-          };
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
- * Find a line match using the priority strategy:
- * 1. Exact hash match (1.0)
- * 2. Normalized hash match (0.95)
- * 3. Line contained in AI content (0.9)
- * 4. AI content contained in line (0.85)
+ * Find a line match using exact matching only:
+ * 1. Exact hash match (confidence: 1.0)
+ * 2. Normalized hash match (confidence: 0.95) - handles formatter whitespace changes
+ *
+ * No substring/fuzzy matching - if hash doesn't match, it's human code.
+ * Philosophy: "If user modified AI code, it's human code"
  */
 export function findLineMatch(
   lineContent: string,
@@ -461,18 +439,15 @@ export function findLineMatch(
   lineHashNormalized: string,
   filePath: string
 ): LineMatchResult | null {
-  // Strategy 1: Exact hash
+  // Strategy 1: Exact hash - perfect match
   let match = findByExactHash(lineHash, filePath);
   if (match) return match;
 
-  // Strategy 2: Normalized hash
+  // Strategy 2: Normalized hash - handles whitespace changes from formatters
   match = findByNormalizedHash(lineHashNormalized, filePath);
   if (match) return match;
 
-  // Strategy 3 & 4: Substring matching (expensive, only if hashes fail)
-  match = findBySubstring(lineContent, filePath);
-  if (match) return match;
-
+  // No match = human code (either written by human or modified from AI)
   return null;
 }
 

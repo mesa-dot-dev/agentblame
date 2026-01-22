@@ -21,12 +21,11 @@ export type AttributionCategory = "ai_generated";
 
 /**
  * How the match was determined
+ * Only exact matching - no fuzzy/substring matching
  */
 export type MatchType =
   | "exact_hash" // Line hash matches exactly (confidence: 1.0)
-  | "normalized_hash" // Normalized hash matches (confidence: 0.95)
-  | "line_in_ai_content" // Line found within AI edit (confidence: 0.9)
-  | "ai_content_in_line" // AI content found in line (confidence: 0.85)
+  | "normalized_hash" // Normalized hash matches, handles formatter whitespace (confidence: 0.95)
   | "move_detected"; // Line was moved from AI-attributed location (confidence: 0.85)
 
 // =============================================================================
@@ -40,6 +39,9 @@ export interface CapturedLine {
   content: string;
   hash: string;
   hashNormalized: string;
+  lineNumber?: number; // Line number in the file (1-indexed)
+  contextBefore?: string; // 3 lines before for disambiguation
+  contextAfter?: string; // 3 lines after for disambiguation
 }
 
 // =============================================================================

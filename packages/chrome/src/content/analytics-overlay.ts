@@ -15,16 +15,16 @@ import {
 const PAGE_CONTAINER_ID = "agentblame-page-container";
 const ORIGINAL_CONTENT_ATTR = "data-agentblame-hidden";
 
-// Tool color palette - GitHub Primer colors that work in light/dark themes
+// Tool color palette - High contrast colors that work in light/dark themes
 const TOOL_COLOR_PALETTE = [
   "#0969da", // Blue
-  "#8250df", // Purple
-  "#bf3989", // Pink
-  "#0a3069", // Dark blue
-  "#1a7f37", // Green
-  "#9a6700", // Yellow/brown
   "#cf222e", // Red
-  "#6e7781", // Gray
+  "#1a7f37", // Green
+  "#8250df", // Purple
+  "#bf8700", // Gold/Yellow
+  "#0550ae", // Dark Blue
+  "#bf3989", // Magenta
+  "#1b7c83", // Teal
 ];
 
 /**

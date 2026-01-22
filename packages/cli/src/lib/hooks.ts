@@ -7,7 +7,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getDistDir } from "./util";
 
 /**
  * Get the Cursor hooks.json path for a repo.
@@ -26,14 +25,14 @@ export function getClaudeSettingsPath(repoRoot: string): string {
 
 /**
  * Generate the hook command for a given provider.
- * Uses bunx to run the agentblame capture command, which works on any machine.
+ * Uses the globally installed agentblame command.
  */
 function getHookCommand(
   provider: "cursor" | "claude",
   event?: string
 ): string {
   const eventArg = event ? ` --event ${event}` : "";
-  return `bunx @mesadev/agentblame capture --provider ${provider}${eventArg}`;
+  return `agentblame capture --provider ${provider}${eventArg}`;
 }
 
 /**
@@ -219,19 +218,16 @@ export async function installAllHooks(
 
 /**
  * Install git post-commit hook to auto-process commits (per-repo)
+ * Always installs/updates the hook - removes old agentblame section if present and adds latest
  */
 export async function installGitHook(repoRoot: string): Promise<boolean> {
   const hooksDir = path.join(repoRoot, ".git", "hooks");
   const hookPath = path.join(hooksDir, "post-commit");
 
-  // Find the CLI script in the dist/ directory (always run compiled .js)
-  const distDir = getDistDir(__dirname);
-  const cliScript = path.resolve(distDir, "index.js");
-
+  // Use the globally installed agentblame command
   const hookContent = `#!/bin/sh
 # Agent Blame - Auto-process commits for AI attribution
-# Process the commit and attach attribution notes
-bun run "${cliScript}" process HEAD 2>/dev/null || true
+agentblame process HEAD 2>/dev/null || true
 
 # Push notes to remote (silently fails if no notes or no remote)
 git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
@@ -248,14 +244,14 @@ git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
       // File doesn't exist
     }
 
-    // Don't overwrite if already has agentblame
-    if (existingContent.includes("agentblame")) {
-      return true;
+    // Remove old agentblame section if present (to update to latest)
+    if (existingContent.includes("agentblame") || existingContent.includes("Agent Blame")) {
+      existingContent = removeAgentBlameSection(existingContent);
     }
 
     // Append to existing hook or create new
-    if (existingContent && !existingContent.includes("agentblame")) {
-      // Append to existing hook
+    if (existingContent.trim()) {
+      // Append to existing hook (preserves user's other hooks)
       const newContent = existingContent.trimEnd() + "\n\n" + hookContent.split("\n").slice(1).join("\n");
       await fs.promises.writeFile(hookPath, newContent, { mode: 0o755 });
     } else {
@@ -271,6 +267,39 @@ git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
 }
 
 /**
+ * Remove Agent Blame section from hook content (for updates)
+ * Removes all agentblame-related lines including the notes push comment
+ */
+function removeAgentBlameSection(content: string): string {
+  const lines = content.split("\n");
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const nextLine = lines[i + 1] || "";
+
+    // Skip lines containing agentblame or Agent Blame
+    if (line.includes("agentblame") || line.includes("Agent Blame")) {
+      continue;
+    }
+
+    // Skip "Push notes to remote" comment if followed by agentblame notes push
+    if (line.includes("Push notes to remote") && nextLine.includes("refs/notes/agentblame")) {
+      continue;
+    }
+
+    // Skip consecutive empty lines
+    if (line.trim() === "" && result.length > 0 && result[result.length - 1].trim() === "") {
+      continue;
+    }
+
+    result.push(line);
+  }
+
+  return result.join("\n");
+}
+
+/**
  * Uninstall git post-commit hook
  */
 export async function uninstallGitHook(repoRoot: string): Promise<boolean> {
@@ -283,21 +312,23 @@ export async function uninstallGitHook(repoRoot: string): Promise<boolean> {
 
     const content = await fs.promises.readFile(hookPath, "utf8");
 
-    if (!content.includes("agentblame")) {
+    if (!content.includes("agentblame") && !content.includes("Agent Blame")) {
       return true; // Not our hook
     }
 
-    // Remove agentblame lines
-    const lines = content.split("\n");
-    const newLines = lines.filter(
-      (line) => !line.includes("agentblame") && !line.includes("Agent Blame")
+    // Remove agentblame section
+    const newContent = removeAgentBlameSection(content);
+
+    // Check if only shebang/empty lines left
+    const meaningfulLines = newContent.split("\n").filter(
+      (l) => l.trim() && !l.startsWith("#!")
     );
 
-    if (newLines.filter((l) => l.trim() && !l.startsWith("#!")).length === 0) {
+    if (meaningfulLines.length === 0) {
       // Only shebang left, delete the file
       await fs.promises.unlink(hookPath);
     } else {
-      await fs.promises.writeFile(hookPath, newLines.join("\n"), { mode: 0o755 });
+      await fs.promises.writeFile(hookPath, newContent, { mode: 0o755 });
     }
 
     return true;
