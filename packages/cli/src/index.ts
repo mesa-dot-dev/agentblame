@@ -357,13 +357,10 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   console.log("");
   console.log("  \x1b[1mNext steps:\x1b[0m");
-  console.log("  \x1b[33m1.\x1b[0m Restart Cursor or Claude Code");
-  console.log("  \x1b[33m2.\x1b[0m Push the analytics tag: \x1b[36mgit push origin agentblame-analytics-anchor\x1b[0m");
+  console.log("  \x1b[33m1.\x1b[0m Commit \x1b[36m.github/workflows/agentblame.yml\x1b[0m to enable PR analytics");
+  console.log("  \x1b[33m2.\x1b[0m Restart Cursor or Claude Code to pick up hooks");
   console.log("  \x1b[33m3.\x1b[0m Make AI edits and commit your changes");
   console.log("  \x1b[33m4.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution");
-  console.log("");
-  console.log("  \x1b[2mWorkflow created at:\x1b[0m .github/workflows/agentblame.yml");
-  console.log("  \x1b[2mCommit this file to enable squash/rebase merge support and analytics.\x1b[0m");
   console.log("");
 }
 
