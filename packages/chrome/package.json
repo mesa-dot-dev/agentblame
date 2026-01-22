@@ -1,6 +1,6 @@
 {
   "name": "@agentblame/chrome",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Agent Blame Chrome Extension - See AI attribution on GitHub PRs",
   "private": true,
   "scripts": {

@@ -420,19 +420,12 @@ export function removeAllMarkers(): void {
  * Inject PR summary banner
  * Supports both legacy and React-based GitHub UI
  * Banner should appear right above the diff files area in both UIs
+ * If a loading banner already exists, it will be updated with the stats
  */
 export function injectPRSummary(stats: {
   total: number;
   aiGenerated: number;
 }): void {
-  // Don't inject if already present
-  if (document.querySelector(".ab-pr-summary")) {
-    return;
-  }
-
-  const summary = document.createElement("div");
-  summary.className = "ab-pr-summary";
-
   const human = stats.total - stats.aiGenerated;
   const aiPercent =
     stats.total > 0 ? Math.round((stats.aiGenerated / stats.total) * 100) : 0;
@@ -442,7 +435,7 @@ export function injectPRSummary(stats: {
     ? chrome.runtime.getURL("icons/icon48.png")
     : "";
 
-  summary.innerHTML = `
+  const statsHtml = `
     <div class="ab-pr-summary-header">
       ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : '<span class="ab-pr-summary-icon">✨</span>'}
       <span class="ab-pr-summary-title">Agent Blame</span>
@@ -472,6 +465,20 @@ export function injectPRSummary(stats: {
       </div>
     </div>
   `;
+
+  // Check if a loading banner already exists - update it in place
+  const existingSummary = document.querySelector(".ab-pr-summary");
+  if (existingSummary) {
+    existingSummary.classList.remove("ab-pr-summary-loading");
+    existingSummary.innerHTML = statsHtml;
+    log("Updated existing PR summary banner with stats");
+    return;
+  }
+
+  // Create new banner
+  const summary = document.createElement("div");
+  summary.className = "ab-pr-summary";
+  summary.innerHTML = statsHtml;
 
   // Strategy 1: Legacy UI - inject before the first .file container
   const firstFileContainer = document.querySelector(".file");
@@ -529,35 +536,72 @@ export function injectFileBadge(
 }
 
 /**
- * Show loading state
+ * Show loading state - displays the Agent Blame header with a loading indicator
  */
 export function showLoading(): void {
-  const headerArea = document.querySelector(
-    ".pull-request-tab-content, #files_bucket, .pr-toolbar",
-  );
-
-  if (!headerArea || document.querySelector(".ab-loading")) {
+  // Don't inject if already present (either loading or loaded)
+  if (document.querySelector(".ab-pr-summary")) {
     return;
   }
 
-  const loading = document.createElement("div");
-  loading.className = "ab-loading";
-  loading.innerHTML = `
-    <div class="ab-loading-spinner"></div>
-    <span>Loading attribution...</span>
+  const summary = document.createElement("div");
+  summary.className = "ab-pr-summary ab-pr-summary-loading";
+
+  // Get the extension icon URL
+  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
+    ? chrome.runtime.getURL("icons/icon48.png")
+    : "";
+
+  summary.innerHTML = `
+    <div class="ab-pr-summary-header">
+      ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : '<span class="ab-pr-summary-icon">✨</span>'}
+      <span class="ab-pr-summary-title">Agent Blame</span>
+    </div>
+    <div class="ab-pr-summary-stats ab-pr-summary-stats-loading">
+      <div class="ab-loading-spinner"></div>
+      <span class="ab-loading-text">Loading attribution...</span>
+    </div>
   `;
 
-  headerArea.insertBefore(loading, headerArea.firstChild);
+  // Strategy 1: Legacy UI - inject before the first .file container
+  const firstFileContainer = document.querySelector(".file");
+  if (firstFileContainer?.parentElement) {
+    firstFileContainer.parentElement.insertBefore(summary, firstFileContainer);
+    log("Injected PR summary loading banner (legacy UI - before .file)");
+    return;
+  }
+
+  // Strategy 2: React UI - inject before [data-hpc] container
+  const hpc = document.querySelector("[data-hpc]");
+  if (hpc?.parentElement) {
+    hpc.parentElement.insertBefore(summary, hpc);
+    log("Injected PR summary loading banner (React UI - before [data-hpc])");
+    return;
+  }
+
+  // Strategy 3: Fallback - try #files_bucket or .pr-toolbar
+  const fallbackArea = document.querySelector("#files_bucket, .pr-toolbar, .pull-request-tab-content");
+  if (fallbackArea) {
+    fallbackArea.insertBefore(summary, fallbackArea.firstChild);
+    log("Injected PR summary loading banner (fallback)");
+    return;
+  }
+
+  log("Could not find injection point for PR summary loading banner");
 }
 
 /**
- * Hide loading state
+ * Hide loading state - removes loading indicator from the header
+ * Note: The header itself stays, only the loading indicator is removed
  */
 export function hideLoading(): void {
-  const loading = document.querySelector(".ab-loading");
-  if (loading) {
-    loading.remove();
+  // Remove old-style standalone loading element if present
+  const standaloneLoading = document.querySelector(".ab-loading:not(.ab-loading-spinner)");
+  if (standaloneLoading) {
+    standaloneLoading.remove();
   }
+
+  // The loading state in the header will be replaced by injectPRSummary
 }
 
 /**
