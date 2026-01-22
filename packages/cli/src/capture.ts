@@ -34,7 +34,7 @@ interface CapturedLine {
 
 interface CapturedEdit {
   timestamp: string;
-  provider: "cursor" | "claudeCode";
+  provider: "cursor" | "claudeCode" | "opencode";
   filePath: string;
   model: string | null;
   lines: CapturedLine[];
@@ -79,10 +79,28 @@ interface ClaudePayload {
   };
   session_id?: string;
   tool_use_id?: string;
+  transcript_path?: string;
   file_path?: string;
   old_string?: string;
   new_string?: string;
   content?: string;
+}
+
+interface OpenCodePayload {
+  tool: "edit" | "write";
+  sessionID?: string;
+  callID?: string;
+  filePath?: string;
+  // Edit tool fields
+  oldString?: string;
+  newString?: string;
+  before?: string;  // Full file content before edit
+  after?: string;   // Full file content after edit
+  diff?: string;    // Unified diff
+  // Write tool fields
+  content?: string;
+  // Model info (extracted by plugin from config)
+  model?: string;
 }
 
 // =============================================================================
@@ -241,6 +259,40 @@ async function readFileLines(filePath: string): Promise<string[] | null> {
 }
 
 /**
+ * Extract model name from Claude Code transcript file.
+ * The transcript is a JSONL file where assistant messages contain the model field.
+ * We read from the end to find the most recent model used.
+ */
+async function extractModelFromTranscript(transcriptPath: string): Promise<string | null> {
+  try {
+    const fs = await import("node:fs/promises");
+    const content = await fs.readFile(transcriptPath, "utf8");
+    const lines = content.split("\n");
+
+    // Read from the end to find the most recent assistant message with model info
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      try {
+        const entry = JSON.parse(line);
+        // Assistant messages have message.model field
+        if (entry.message?.model) {
+          return entry.message.model;
+        }
+      } catch {
+        // Skip malformed lines
+        continue;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Find where old_string exists in file and return line numbers for new_string
  * Returns null if old_string not found (new file or complex edit)
  */
@@ -302,14 +354,14 @@ function findEditLocation(
 // Payload Processing
 // =============================================================================
 
-function parseArgs(): { provider: "cursor" | "claude"; event?: string } {
+function parseArgs(): { provider: "cursor" | "claude" | "opencode"; event?: string } {
   const args = process.argv.slice(2);
-  let provider: "cursor" | "claude" = "cursor";
+  let provider: "cursor" | "claude" | "opencode" = "cursor";
   let event: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--provider" && args[i + 1]) {
-      provider = args[i + 1] as "cursor" | "claude";
+      provider = args[i + 1] as "cursor" | "claude" | "opencode";
       i++;
     } else if (args[i] === "--event" && args[i + 1]) {
       event = args[i + 1];
@@ -407,8 +459,27 @@ async function processCursorPayload(
   return edits;
 }
 
-function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
+async function processClaudePayload(payload: ClaudePayload): Promise<CapturedEdit[]> {
   const edits: CapturedEdit[] = [];
+
+  // CRITICAL: Skip payloads that are actually from Cursor.
+  // Both Cursor and Claude Code can trigger hooks from .claude/settings.json,
+  // so we need to detect Cursor payloads and skip them here.
+  // Cursor payloads have cursor_version field, Claude payloads don't.
+  if ((payload as any).cursor_version) {
+    return edits;
+  }
+
+  // CRITICAL: Only process if this is an actual Edit or Write tool usage from Claude.
+  // Claude Code's hooks fire for various reasons, but we only want to capture
+  // when Claude actually performed an edit/write operation.
+  // Without a valid tool_name, this is likely a spurious trigger (e.g., from file
+  // watcher detecting external changes).
+  const toolName = payload.tool_name?.toLowerCase() || "";
+  if (toolName !== "edit" && toolName !== "write" && toolName !== "multiedit") {
+    return edits;
+  }
+
   const timestamp = new Date().toISOString();
 
   // Claude Code has tool_input with the actual content
@@ -422,8 +493,26 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
   const sessionId = payload.session_id;
   const toolUseId = payload.tool_use_id;
 
-  // If we have structuredPatch, use it for precise line numbers
-  if (toolResponse?.structuredPatch && toolResponse.structuredPatch.length > 0) {
+  // Extract model from transcript file (Claude Code provides transcript_path in hook payload)
+  let model: string | null = null;
+  if (payload.transcript_path) {
+    model = await extractModelFromTranscript(payload.transcript_path);
+  }
+  // Fallback to generic "claude" if transcript parsing fails
+  if (!model) {
+    model = "claude";
+  }
+
+  // For Edit/MultiEdit tools, REQUIRE structuredPatch.
+  // Without structuredPatch, we cannot accurately determine what Claude added.
+  // Spurious triggers (e.g., file watcher detecting external changes) won't have
+  // structuredPatch and would incorrectly capture the entire file.
+  if (toolName === "edit" || toolName === "multiedit") {
+    if (!toolResponse?.structuredPatch || toolResponse.structuredPatch.length === 0) {
+      // No structuredPatch - skip this capture to avoid incorrect attribution
+      return edits;
+    }
+
     // Get original file lines for context
     const originalFileLines = (toolResponse.originalFile || "").split("\n");
 
@@ -446,7 +535,7 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
       timestamp,
       provider: "claudeCode",
       filePath,
-      model: "claude",
+      model,
       lines,
       content: addedContent,
       contentHash: computeHash(addedContent),
@@ -459,14 +548,14 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
     return edits;
   }
 
-  // Fallback: Get content from tool_input or top-level payload
-  const content = toolInput?.content || payload.content;
-  const oldString = toolInput?.old_string || payload.old_string || "";
-  const newString = toolInput?.new_string || payload.new_string || "";
+  // Handle Write tool (new file creation)
+  // For Write, we need content
+  if (toolName === "write") {
+    const content = toolInput?.content || payload.content;
 
-  // Handle Write tool (new file, content only)
-  if (content && !oldString && !newString) {
-    if (!content.trim()) return edits;
+    if (!content || !content.trim()) {
+      return edits;
+    }
 
     const lines = hashLines(content);
     if (lines.length === 0) return edits;
@@ -475,7 +564,7 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
       timestamp,
       provider: "claudeCode",
       filePath,
-      model: "claude",
+      model,
       lines,
       content,
       contentHash: computeHash(content),
@@ -487,29 +576,148 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
     return edits;
   }
 
-  // Handle Edit tool (old_string -> new_string) without structuredPatch
-  if (!newString) return edits;
+  // Unknown tool type that passed the initial check - skip
+  return edits;
+}
 
-  const addedContent = extractAddedContent(oldString, newString);
-  if (!addedContent.trim()) return edits;
+/**
+ * Process OpenCode payload.
+ * OpenCode provides before/after file content which allows precise line number extraction.
+ */
+function processOpenCodePayload(payload: OpenCodePayload): CapturedEdit[] {
+  const edits: CapturedEdit[] = [];
+  const timestamp = new Date().toISOString();
 
-  const lines = hashLines(addedContent);
-  if (lines.length === 0) return edits;
+  const filePath = payload.filePath;
+  if (!filePath) return edits;
 
-  edits.push({
-    timestamp,
-    provider: "claudeCode",
-    filePath,
-    model: "claude",
-    lines,
-    content: addedContent,
-    contentHash: computeHash(addedContent),
-    contentHashNormalized: computeNormalizedHash(addedContent),
-    editType: determineEditType(oldString, newString),
-    oldContent: oldString || undefined,
-    sessionId,
-    toolUseId,
-  });
+  const sessionId = payload.sessionID;
+  const toolUseId = payload.callID;
+  const model = payload.model || null;
+
+  // Handle write tool (new file creation)
+  if (payload.tool === "write" && payload.content) {
+    const content = payload.content;
+    if (!content.trim()) return edits;
+
+    // For new files, all lines are added
+    const fileLines = content.split("\n");
+    const linesWithNumbers = fileLines
+      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
+      .filter(l => l.content.trim());
+
+    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
+    if (lines.length === 0) return edits;
+
+    edits.push({
+      timestamp,
+      provider: "opencode",
+      filePath,
+      model,
+      lines,
+      content,
+      contentHash: computeHash(content),
+      contentHashNormalized: computeNormalizedHash(content),
+      editType: "addition",
+      sessionId,
+      toolUseId,
+    });
+
+    return edits;
+  }
+
+  // Handle edit tool
+  if (payload.tool === "edit") {
+    // OpenCode provides full before/after content - use it for precise line detection
+    if (payload.before !== undefined && payload.after !== undefined) {
+      const beforeLines = payload.before.split("\n");
+      const afterLines = payload.after.split("\n");
+
+      // Use diffLines to find added lines with their positions
+      const parts = diffLines(payload.before, payload.after);
+      const addedLinesWithNumbers: Array<{ content: string; lineNumber: number }> = [];
+
+      let afterLineIndex = 0;
+      for (const part of parts) {
+        const partLines = part.value.split("\n");
+        // Remove empty string from split if value ends with \n
+        if (partLines[partLines.length - 1] === "") {
+          partLines.pop();
+        }
+
+        if (part.added) {
+          // These lines were added
+          for (const line of partLines) {
+            addedLinesWithNumbers.push({
+              content: line,
+              lineNumber: afterLineIndex + 1, // 1-indexed
+            });
+            afterLineIndex++;
+          }
+        } else if (part.removed) {
+          // Removed lines don't affect after line index
+        } else {
+          // Context lines - advance the after line index
+          afterLineIndex += partLines.length;
+        }
+      }
+
+      if (addedLinesWithNumbers.length === 0) return edits;
+
+      // Filter empty lines and hash with context
+      const nonEmptyLines = addedLinesWithNumbers.filter(l => l.content.trim());
+      if (nonEmptyLines.length === 0) return edits;
+
+      const lines = hashLinesWithNumbers(nonEmptyLines, afterLines);
+      if (lines.length === 0) return edits;
+
+      const addedContent = nonEmptyLines.map(l => l.content).join("\n");
+
+      edits.push({
+        timestamp,
+        provider: "opencode",
+        filePath,
+        model,
+        lines,
+        content: addedContent,
+        contentHash: computeHash(addedContent),
+        contentHashNormalized: computeNormalizedHash(addedContent),
+        editType: "modification",
+        oldContent: payload.oldString,
+        sessionId,
+        toolUseId,
+      });
+
+      return edits;
+    }
+
+    // Fallback: use oldString/newString if before/after not available
+    const oldString = payload.oldString || "";
+    const newString = payload.newString || "";
+
+    if (!newString) return edits;
+
+    const addedContent = extractAddedContent(oldString, newString);
+    if (!addedContent.trim()) return edits;
+
+    const lines = hashLines(addedContent);
+    if (lines.length === 0) return edits;
+
+    edits.push({
+      timestamp,
+      provider: "opencode",
+      filePath,
+      model,
+      lines,
+      content: addedContent,
+      contentHash: computeHash(addedContent),
+      contentHashNormalized: computeNormalizedHash(addedContent),
+      editType: determineEditType(oldString, newString),
+      oldContent: oldString || undefined,
+      sessionId,
+      toolUseId,
+    });
+  }
 
   return edits;
 }
@@ -548,7 +756,9 @@ export async function runCapture(): Promise<void> {
       const eventName = event || data.hook_event_name || "afterFileEdit";
       edits = await processCursorPayload(payload as CursorPayload, eventName);
     } else if (provider === "claude") {
-      edits = processClaudePayload(payload as ClaudePayload);
+      edits = await processClaudePayload(payload as ClaudePayload);
+    } else if (provider === "opencode") {
+      edits = processOpenCodePayload(payload as OpenCodePayload);
     }
 
     // Save all edits to SQLite database

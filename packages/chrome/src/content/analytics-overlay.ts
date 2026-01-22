@@ -10,21 +10,22 @@ import {
   type AnalyticsData,
   type AnalyticsHistoryEntry,
   getAnalytics,
+  clearAnalyticsCache,
 } from "../lib/mock-analytics";
 
 const PAGE_CONTAINER_ID = "agentblame-page-container";
 const ORIGINAL_CONTENT_ATTR = "data-agentblame-hidden";
 
-// Tool color palette - High contrast colors that work in light/dark themes
+// Tool color palette - Soft, pleasant colors that work in light/dark themes
 const TOOL_COLOR_PALETTE = [
-  "#0969da", // Blue
-  "#cf222e", // Red
-  "#1a7f37", // Green
-  "#8250df", // Purple
-  "#bf8700", // Gold/Yellow
-  "#0550ae", // Dark Blue
-  "#bf3989", // Magenta
-  "#1b7c83", // Teal
+  "#5B8DEE", // Soft blue (Cursor)
+  "#E07B53", // Soft coral/orange (Claude Code)
+  "#4DBBAA", // Soft teal (OpenCode)
+  "#9B7ED9", // Soft purple
+  "#6ABF69", // Soft green
+  "#E5A84B", // Soft amber
+  "#D97BA2", // Soft rose
+  "#5AADCF", // Soft cyan
 ];
 
 /**
@@ -34,6 +35,7 @@ function formatProviderName(provider: string): string {
   const names: Record<string, string> = {
     cursor: "Cursor",
     claudeCode: "Claude Code",
+    opencode: "OpenCode",
     copilot: "Copilot",
     windsurf: "Windsurf",
     aider: "Aider",
@@ -325,7 +327,7 @@ function handlePeriodChange(period: PeriodOption): void {
 }
 
 /**
- * Attach event listeners to period dropdown
+ * Attach event listeners to period dropdown and refresh button
  */
 function attachPeriodListeners(): void {
   const dropdown = document.getElementById("agentblame-period-select");
@@ -335,6 +337,38 @@ function attachPeriodListeners(): void {
       handlePeriodChange(select.value as PeriodOption);
     });
   }
+
+  const refreshBtn = document.getElementById("agentblame-refresh-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", handleRefresh);
+  }
+}
+
+/**
+ * Handle refresh button click - clear cache and refetch data
+ */
+async function handleRefresh(): Promise<void> {
+  if (!currentOwner || !currentRepo) return;
+
+  const container = document.getElementById(PAGE_CONTAINER_ID);
+  if (!container) return;
+
+  // Show loading state
+  container.innerHTML = renderLoadingState();
+
+  // Clear cache and refetch
+  await clearAnalyticsCache(currentOwner, currentRepo);
+  const analytics = await getAnalytics(currentOwner, currentRepo);
+
+  if (!analytics) {
+    container.innerHTML = renderEmptyState();
+    return;
+  }
+
+  currentAnalytics = analytics;
+  const filtered = filterAnalyticsByPeriod(analytics, currentPeriod);
+  container.innerHTML = renderAnalyticsPage(currentOwner, currentRepo, filtered, analytics);
+  attachPeriodListeners();
 }
 
 /**
@@ -366,7 +400,7 @@ function renderAnalyticsPage(
             AI code attribution analytics
           </div>
         </div>
-        <div>
+        <div class="d-flex gap-2 flex-items-center">
           <select id="agentblame-period-select" class="form-select">
             ${(Object.keys(PERIOD_LABELS) as PeriodOption[])
               .map(
@@ -375,6 +409,13 @@ function renderAnalyticsPage(
               )
               .join("")}
           </select>
+          <button id="agentblame-refresh-btn" class="btn btn-sm" title="Refresh analytics data">
+            <svg class="octicon" viewBox="0 0 16 16" width="16" height="16">
+              <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.75.75 0 0 1 1.363-.613A6.5 6.5 0 1 1 8 1.5v2A.75.75 0 0 1 6.75 4v-.75A.75.75 0 0 1 8 3z"></path>
+              <path fill-rule="evenodd" d="M8 0a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0z"></path>
+              <path fill-rule="evenodd" d="M7.47 3.22a.75.75 0 0 1 1.06 0l1.5 1.5a.75.75 0 0 1-1.06 1.06l-1.5-1.5a.75.75 0 0 1 0-1.06z"></path>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -440,7 +481,7 @@ function renderRepositorySection(
   );
 
   // Colors
-  const aiColor = "var(--color-severe-fg, #f78166)"; // GitHub's coral orange
+  const aiColor = "#b86540"; // Mesa Orange
   const humanColor = "var(--color-success-fg, #238636)"; // GitHub's addition green
 
   return `
@@ -552,7 +593,7 @@ function renderContributorsSection(analytics: AnalyticsData): string {
         <div class="flex-1 d-flex flex-items-center gap-2">
           <span class="f6 color-fg-muted" style="width: 55px;">${aiPercent}% AI</span>
           <div class="d-flex flex-1 rounded-2 overflow-hidden" style="height: 8px; max-width: 200px;">
-            <div style="width: ${aiPercent}%; background: var(--color-severe-fg);"></div>
+            <div style="width: ${aiPercent}%; background: #b86540;"></div>
             <div style="width: ${humanPercent}%; background: var(--color-success-fg);"></div>
           </div>
         </div>
@@ -608,7 +649,7 @@ function renderPullRequestsSection(
       const aiPercent = pr.added > 0 ? Math.round((pr.aiLines / pr.added) * 100) : 0;
       const badgeStyle =
         aiPercent > 50
-          ? "background: var(--color-severe-fg); color: white;"
+          ? "background: #b86540; color: white;"
           : aiPercent > 0
             ? "background: var(--color-attention-emphasis); color: white;"
             : "background: var(--color-success-emphasis); color: white;";
@@ -648,9 +689,36 @@ function renderPullRequestsSection(
 
 /**
  * Format model name for display
+ * Handles model IDs like "claude-opus-4-5-20251101" -> "Claude Opus 4.5"
  */
 function formatModelName(model: string): string {
-  return model
+  // Known model name mappings for cleaner display
+  const knownModels: Record<string, string> = {
+    "claude": "Claude",
+    "claude-3-opus": "Claude 3 Opus",
+    "claude-3-sonnet": "Claude 3 Sonnet",
+    "claude-3.5-sonnet": "Claude 3.5 Sonnet",
+    "claude-3-haiku": "Claude 3 Haiku",
+    "gpt-4": "GPT-4",
+    "gpt-4o": "GPT-4o",
+    "gpt-4-turbo": "GPT-4 Turbo",
+  };
+
+  // Check for exact match first
+  if (knownModels[model]) {
+    return knownModels[model];
+  }
+
+  // Handle versioned model names like "claude-opus-4-5-20251101"
+  // Extract the model family and version, strip the date suffix
+  const datePattern = /-\d{8}$/;
+  let cleaned = model.replace(datePattern, "");
+
+  // Convert patterns like "4-5" to "4.5" for version numbers
+  cleaned = cleaned.replace(/-(\d+)-(\d+)$/, "-$1.$2");
+
+  // Title case and replace dashes with spaces
+  return cleaned
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }

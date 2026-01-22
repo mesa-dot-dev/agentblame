@@ -11,7 +11,7 @@
 /**
  * AI provider that generated the code
  */
-export type AiProvider = "cursor" | "claudeCode";
+export type AiProvider = "cursor" | "claudeCode" | "opencode";
 
 /**
  * Attribution category - we only track AI-generated code
@@ -178,6 +178,7 @@ export interface GitState {
 export interface ProviderBreakdown {
   cursor?: number;
   claudeCode?: number;
+  opencode?: number;
 }
 
 /**

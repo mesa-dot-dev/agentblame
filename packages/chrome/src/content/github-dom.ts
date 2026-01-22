@@ -46,12 +46,12 @@ export function isFilesChangedTab(): boolean {
  */
 export function getDiffContainers(): HTMLElement[] {
   // Try multiple selectors for GitHub's various diff layouts
+  // Order matters - try more specific selectors first
   const selectors = [
     ".file", // Standard file container
     '[data-details-container-group="file"]', // Alternative structure
     ".js-file", // JS-enhanced file container
     "diff-layout", // New React-based diff component
-    "[data-hpc]", // High performance container
   ];
 
   for (const selector of selectors) {
@@ -60,6 +60,38 @@ export function getDiffContainers(): HTMLElement[] {
       log(`Found ${containers.length} containers with selector: ${selector}`);
       return Array.from(containers) as HTMLElement[];
     }
+  }
+
+  // React UI: [data-hpc] is a parent container - find individual file sections within it
+  const hpcContainer = document.querySelector("[data-hpc]");
+  if (hpcContainer) {
+    // New React UI: Each file's diff is in a separate table
+    // Find tables that contain diff lines and use them as containers
+    const tables = hpcContainer.querySelectorAll("table");
+    if (tables.length > 0) {
+      const diffTables: HTMLElement[] = [];
+      for (const table of tables) {
+        // Only include tables that have diff content (diff-line-row or diff-text-cell)
+        if (table.querySelector("tr.diff-line-row, .diff-text-cell")) {
+          diffTables.push(table as HTMLElement);
+        }
+      }
+      if (diffTables.length > 0) {
+        log(`Found ${diffTables.length} diff tables as file containers`);
+        return diffTables;
+      }
+    }
+
+    // Try to find file containers using copilot-diff-entry (used in some new UI versions)
+    const copilotEntries = hpcContainer.querySelectorAll("copilot-diff-entry");
+    if (copilotEntries.length > 0) {
+      log(`Found ${copilotEntries.length} copilot-diff-entry elements`);
+      return Array.from(copilotEntries) as HTMLElement[];
+    }
+
+    // Fallback: Return the [data-hpc] container itself
+    log(`Fallback: returning [data-hpc] as single container`);
+    return [hpcContainer as HTMLElement];
   }
 
   // Fallback: find data-tagsearch-path and traverse up to find container
@@ -123,20 +155,50 @@ export function getFilePath(container: HTMLElement): string {
     return fileLink.getAttribute("title") || fileLink.textContent?.trim() || "";
   }
 
-  // React UI: Look for file name in header with CSS module class
-  // Classes look like: DiffFileHeader-module__file-name--xxxxx
-  const allElements = container.querySelectorAll("*");
-  for (const el of allElements) {
-    const className = el.className;
-    if (typeof className === "string" && className.includes("file-name")) {
-      const text = el.textContent?.trim();
-      // Filter out navigation characters and ensure we have a valid file name
-      if (text && text.length > 0 && !text.includes("…") && text.includes(".")) {
-        // Clean up any special unicode characters GitHub uses for RTL/LTR marks
-        const cleanPath = text.replace(/[\u200E\u200F\u202A-\u202E]/g, "").trim();
-        if (cleanPath) {
-          log(`Found file path via React UI: ${cleanPath}`);
-          return cleanPath;
+  // React UI: For table containers, look for the file path in parent/sibling structure
+  // The file header with the path is often a sibling or in an ancestor's child
+  let current: HTMLElement | null = container;
+  for (let depth = 0; depth < 10 && current; depth++) {
+    const parent = current.parentElement;
+    if (!parent) break;
+
+    // Check if parent or any sibling has the path
+    const pathInParent = parent.querySelector("[data-tagsearch-path]");
+    if (pathInParent) {
+      // Make sure this path element is associated with our container
+      // by checking if the path element's container (going up) matches our container's parent
+      const path = pathInParent.getAttribute("data-tagsearch-path") || "";
+
+      // Find the closest common ancestor between pathInParent and container
+      // If pathInParent is within the same file block, use it
+      let pathAncestor: HTMLElement | null = pathInParent as HTMLElement;
+      for (let i = 0; i < 10 && pathAncestor; i++) {
+        if (pathAncestor === parent) {
+          return path;
+        }
+        pathAncestor = pathAncestor.parentElement;
+      }
+    }
+
+    current = parent;
+  }
+
+  // React UI: Look for file name in elements with "file-name" in class
+  // Search in container and parents
+  const searchContexts = [container, container.parentElement, container.parentElement?.parentElement].filter(Boolean) as HTMLElement[];
+  for (const ctx of searchContexts) {
+    const allElements = ctx.querySelectorAll("*");
+    for (const el of allElements) {
+      const className = el.className;
+      if (typeof className === "string" && className.includes("file-name")) {
+        const text = el.textContent?.trim();
+        // Filter out navigation characters and ensure we have a valid file name
+        if (text && text.length > 0 && !text.includes("…") && text.includes(".")) {
+          // Clean up any special unicode characters GitHub uses for RTL/LTR marks
+          const cleanPath = text.replace(/[\u200E\u200F\u202A-\u202E]/g, "").trim();
+          if (cleanPath) {
+            return cleanPath;
+          }
         }
       }
     }

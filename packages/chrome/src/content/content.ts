@@ -286,7 +286,6 @@ function findAttribution(
     filePath,
     filePath.replace(/^\//, ""),
     `/${filePath}`,
-    filePath.split("/").slice(-1)[0], // Just filename
   ];
 
   for (const variant of variants) {
@@ -294,6 +293,18 @@ function findAttribution(
     const variantMatch = map.get(variantKey);
     if (variantMatch) {
       return variantMatch;
+    }
+  }
+
+  // Last resort: match by filename only (for React UI which may only show filename)
+  // Search through the map for any key that ends with the same filename:lineNumber
+  const filename = filePath.split("/").pop() || filePath;
+  if (filename && filename !== filePath) {
+    for (const [mapKey, value] of map.entries()) {
+      // mapKey format is "path/to/file.ext:lineNumber"
+      if (mapKey.endsWith(`/${filename}:${lineNumber}`) || mapKey === `${filename}:${lineNumber}`) {
+        return value;
+      }
     }
   }
 

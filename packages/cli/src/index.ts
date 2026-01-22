@@ -20,10 +20,12 @@ import { runCapture } from "./capture";
 import {
   installCursorHooks,
   installClaudeHooks,
+  installOpenCodeHooks,
   installGitHook,
   installGitHubAction,
   uninstallCursorHooks,
   uninstallClaudeHooks,
+  uninstallOpenCodeHooks,
   uninstallGitHook,
   uninstallGitHubAction,
   getRepoRoot,
@@ -294,16 +296,22 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     results.push({ name: "Database", success: false });
   }
 
-  // Add .agentblame/ to .gitignore
+  // Add .agentblame/ and .opencode/ to .gitignore
   try {
     const gitignorePath = path.join(repoRoot, ".gitignore");
     let gitignoreContent = "";
     if (fs.existsSync(gitignorePath)) {
       gitignoreContent = await fs.promises.readFile(gitignorePath, "utf8");
     }
+    let entriesToAdd = "";
     if (!gitignoreContent.includes(".agentblame")) {
-      const entry = "\n# Agent Blame local database\n.agentblame/\n";
-      await fs.promises.appendFile(gitignorePath, entry);
+      entriesToAdd += "\n# Agent Blame local database\n.agentblame/\n";
+    }
+    if (!gitignoreContent.includes(".opencode")) {
+      entriesToAdd += "\n# OpenCode local plugin (installed by agentblame init)\n.opencode/\n";
+    }
+    if (entriesToAdd) {
+      await fs.promises.appendFile(gitignorePath, entriesToAdd);
     }
     results.push({ name: "Updated .gitignore", success: true });
   } catch (err) {
@@ -316,6 +324,9 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   const claudeSuccess = await installClaudeHooks(repoRoot);
   results.push({ name: "Claude Code hooks", success: claudeSuccess });
+
+  const opencodeSuccess = await installOpenCodeHooks(repoRoot);
+  results.push({ name: "OpenCode hooks", success: opencodeSuccess });
 
   // Install repo hooks and workflow
   const gitHookSuccess = await installGitHook(repoRoot);
@@ -410,6 +421,9 @@ async function runClean(uninstallArgs: string[] = []): Promise<void> {
 
   const claudeSuccess = await uninstallClaudeHooks(repoRoot);
   results.push({ name: "Claude Code hooks", success: claudeSuccess });
+
+  const opencodeSuccess = await uninstallOpenCodeHooks(repoRoot);
+  results.push({ name: "OpenCode hooks", success: opencodeSuccess });
 
   // Remove repo hooks and workflow
   const gitHookSuccess = await uninstallGitHook(repoRoot);
