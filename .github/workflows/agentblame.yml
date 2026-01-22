@@ -28,8 +28,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install dependencies
-        run: bun install
+      - name: Install agentblame
+        run: npm install -g @mesadev/agentblame
 
       - name: Fetch notes, tags, and PR head
         run: |
@@ -39,7 +39,7 @@ jobs:
           git fetch origin refs/pull/${{ github.event.pull_request.number }}/head:refs/pull/${{ github.event.pull_request.number }}/head 2>/dev/null || echo "Could not fetch PR head"
 
       - name: Process merge (transfer notes + update analytics)
-        run: bun run packages/cli/src/post-merge.ts
+        run: bun $(npm root -g)/@mesadev/agentblame/dist/post-merge.js
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}

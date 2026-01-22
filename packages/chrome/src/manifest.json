@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agent Blame",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "See AI-generated vs human-written code on GitHub PRs",
   "icons": {
     "16": "icons/icon16.png",

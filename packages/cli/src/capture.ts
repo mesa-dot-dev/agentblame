@@ -27,6 +27,9 @@ interface CapturedLine {
   content: string;
   hash: string;
   hashNormalized: string;
+  lineNumber?: number;
+  contextBefore?: string;
+  contextAfter?: string;
 }
 
 interface CapturedEdit {
@@ -40,12 +43,24 @@ interface CapturedEdit {
   contentHashNormalized: string;
   editType: "addition" | "modification" | "replacement";
   oldContent?: string;
+  sessionId?: string;
+  toolUseId?: string;
 }
 
 interface CursorPayload {
   file_path: string;
   edits?: Array<{ old_string: string; new_string: string }>;
   model?: string;
+  conversation_id?: string;
+  generation_id?: string;
+}
+
+interface StructuredPatchHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
 }
 
 interface ClaudePayload {
@@ -56,6 +71,14 @@ interface ClaudePayload {
     new_string?: string;
     content?: string;
   };
+  tool_response?: {
+    filePath?: string;
+    originalFile?: string;
+    structuredPatch?: StructuredPatchHunk[];
+    userModified?: boolean;
+  };
+  session_id?: string;
+  tool_use_id?: string;
   file_path?: string;
   old_string?: string;
   new_string?: string;
@@ -137,6 +160,144 @@ function hashLines(content: string): CapturedLine[] {
   return result;
 }
 
+/**
+ * Hash lines with line numbers and context (for Claude structuredPatch)
+ */
+function hashLinesWithNumbers(
+  lines: Array<{ content: string; lineNumber: number }>,
+  allFileLines: string[]
+): CapturedLine[] {
+  const result: CapturedLine[] = [];
+
+  for (const { content, lineNumber } of lines) {
+    // Skip empty lines
+    if (!content.trim()) continue;
+
+    // Get context (3 lines before and after)
+    const contextBefore = allFileLines
+      .slice(Math.max(0, lineNumber - 4), lineNumber - 1)
+      .join("\n");
+    const contextAfter = allFileLines
+      .slice(lineNumber, Math.min(allFileLines.length, lineNumber + 3))
+      .join("\n");
+
+    result.push({
+      content,
+      hash: computeHash(content),
+      hashNormalized: computeNormalizedHash(content),
+      lineNumber,
+      contextBefore: contextBefore || undefined,
+      contextAfter: contextAfter || undefined,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Parse Claude Code's structuredPatch to extract added lines with line numbers
+ */
+function parseStructuredPatch(
+  hunks: StructuredPatchHunk[],
+  originalFileLines: string[]
+): Array<{ content: string; lineNumber: number }> {
+  const addedLines: Array<{ content: string; lineNumber: number }> = [];
+
+  for (const hunk of hunks) {
+    let newLineNumber = hunk.newStart;
+
+    for (const line of hunk.lines) {
+      if (line.startsWith("+")) {
+        // Added line - strip the + prefix
+        addedLines.push({
+          content: line.slice(1),
+          lineNumber: newLineNumber,
+        });
+        newLineNumber++;
+      } else if (line.startsWith("-")) {
+        // Deleted line - don't increment new line number
+        continue;
+      } else {
+        // Context line (starts with space) - increment line number
+        newLineNumber++;
+      }
+    }
+  }
+
+  return addedLines;
+}
+
+/**
+ * Read a file and return its lines (for Cursor line number derivation)
+ */
+async function readFileLines(filePath: string): Promise<string[] | null> {
+  try {
+    const fs = await import("node:fs/promises");
+    const content = await fs.readFile(filePath, "utf8");
+    return content.split("\n");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find where old_string exists in file and return line numbers for new_string
+ * Returns null if old_string not found (new file or complex edit)
+ */
+function findEditLocation(
+  fileLines: string[],
+  oldString: string,
+  newString: string
+): Array<{ content: string; lineNumber: number }> | null {
+  if (!oldString) {
+    // New content with no old string - can't determine line numbers without more context
+    return null;
+  }
+
+  const fileContent = fileLines.join("\n");
+  const oldIndex = fileContent.indexOf(oldString);
+
+  if (oldIndex === -1) {
+    return null;
+  }
+
+  // Count lines before the match to get line number
+  const linesBefore = fileContent.slice(0, oldIndex).split("\n").length;
+  const startLine = linesBefore;
+
+  // Calculate what the new file will look like after the edit
+  const newFileContent = fileContent.replace(oldString, newString);
+  const newFileLines = newFileContent.split("\n");
+
+  // Find the added lines by comparing old and new
+  const addedContent = extractAddedContent(oldString, newString);
+  if (!addedContent.trim()) {
+    return null;
+  }
+
+  const addedLines = addedContent.split("\n").filter(l => l.trim());
+  const result: Array<{ content: string; lineNumber: number }> = [];
+
+  // Find each added line in the new content
+  let searchStart = startLine - 1;
+  for (const addedLine of addedLines) {
+    if (!addedLine.trim()) continue;
+
+    for (let i = searchStart; i < newFileLines.length; i++) {
+      if (newFileLines[i] === addedLine || newFileLines[i].trim() === addedLine.trim()) {
+        result.push({
+          content: addedLine,
+          lineNumber: i + 1, // 1-indexed
+        });
+        searchStart = i + 1;
+        break;
+      }
+    }
+  }
+
+  return result.length > 0 ? result : null;
+}
+
 // =============================================================================
 // Payload Processing
 // =============================================================================
@@ -174,13 +335,15 @@ function saveEdit(edit: CapturedEdit): void {
     editType: edit.editType,
     oldContent: edit.oldContent,
     lines: edit.lines,
+    sessionId: edit.sessionId,
+    toolUseId: edit.toolUseId,
   });
 }
 
-function processCursorPayload(
+async function processCursorPayload(
   payload: CursorPayload,
   event: string
-): CapturedEdit[] {
+): Promise<CapturedEdit[]> {
   const edits: CapturedEdit[] = [];
   const timestamp = new Date().toISOString();
 
@@ -194,6 +357,9 @@ function processCursorPayload(
     return edits;
   }
 
+  // Read the file to derive line numbers (Cursor doesn't provide them)
+  const fileLines = await readFileLines(payload.file_path);
+
   for (const edit of payload.edits) {
     const oldString = edit.old_string || "";
     const newString = edit.new_string || "";
@@ -204,8 +370,22 @@ function processCursorPayload(
     const addedContent = extractAddedContent(oldString, newString);
     if (!addedContent.trim()) continue;
 
-    // Hash each line individually
-    const lines = hashLines(addedContent);
+    let lines: CapturedLine[];
+
+    // Try to derive line numbers if we have the file
+    if (fileLines && oldString) {
+      const linesWithNumbers = findEditLocation(fileLines, oldString, newString);
+      if (linesWithNumbers && linesWithNumbers.length > 0) {
+        lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
+      } else {
+        // Fallback to basic hashing without line numbers
+        lines = hashLines(addedContent);
+      }
+    } else {
+      // No file or no old_string - hash without line numbers
+      lines = hashLines(addedContent);
+    }
+
     if (lines.length === 0) continue;
 
     edits.push({
@@ -213,18 +393,14 @@ function processCursorPayload(
       provider: "cursor",
       filePath: payload.file_path,
       model: payload.model || null,
-
-      // Line-level data
       lines,
-
-      // Aggregate data
       content: addedContent,
       contentHash: computeHash(addedContent),
       contentHashNormalized: computeNormalizedHash(addedContent),
-
-      // Edit context
       editType: determineEditType(oldString, newString),
       oldContent: oldString || undefined,
+      sessionId: payload.conversation_id,
+      toolUseId: payload.generation_id,
     });
   }
 
@@ -235,13 +411,55 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
   const edits: CapturedEdit[] = [];
   const timestamp = new Date().toISOString();
 
-  // Claude Code has tool_input with the actual content, or it may be at top level
+  // Claude Code has tool_input with the actual content
   const toolInput = payload.tool_input;
-  const filePath = toolInput?.file_path || payload.file_path;
+  const toolResponse = payload.tool_response;
+  const filePath = toolResponse?.filePath || toolInput?.file_path || payload.file_path;
 
   if (!filePath) return edits;
 
-  // Get content from tool_input or top-level payload
+  // Extract session info for correlation
+  const sessionId = payload.session_id;
+  const toolUseId = payload.tool_use_id;
+
+  // If we have structuredPatch, use it for precise line numbers
+  if (toolResponse?.structuredPatch && toolResponse.structuredPatch.length > 0) {
+    // Get original file lines for context
+    const originalFileLines = (toolResponse.originalFile || "").split("\n");
+
+    // Parse the structured patch to get added lines with line numbers
+    const addedLinesWithNumbers = parseStructuredPatch(
+      toolResponse.structuredPatch,
+      originalFileLines
+    );
+
+    if (addedLinesWithNumbers.length === 0) return edits;
+
+    // Hash lines with their line numbers and context
+    const lines = hashLinesWithNumbers(addedLinesWithNumbers, originalFileLines);
+    if (lines.length === 0) return edits;
+
+    // Aggregate content
+    const addedContent = addedLinesWithNumbers.map(l => l.content).join("\n");
+
+    edits.push({
+      timestamp,
+      provider: "claudeCode",
+      filePath,
+      model: "claude",
+      lines,
+      content: addedContent,
+      contentHash: computeHash(addedContent),
+      contentHashNormalized: computeNormalizedHash(addedContent),
+      editType: "modification",
+      sessionId,
+      toolUseId,
+    });
+
+    return edits;
+  }
+
+  // Fallback: Get content from tool_input or top-level payload
   const content = toolInput?.content || payload.content;
   const oldString = toolInput?.old_string || payload.old_string || "";
   const newString = toolInput?.new_string || payload.new_string || "";
@@ -256,24 +474,20 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
     edits.push({
       timestamp,
       provider: "claudeCode",
-      filePath: filePath,
+      filePath,
       model: "claude",
-
-      // Line-level data
       lines,
-
-      // Aggregate data
-      content: content,
+      content,
       contentHash: computeHash(content),
       contentHashNormalized: computeNormalizedHash(content),
-
-      // Edit context
       editType: "addition",
+      sessionId,
+      toolUseId,
     });
     return edits;
   }
 
-  // Handle Edit tool (old_string -> new_string)
+  // Handle Edit tool (old_string -> new_string) without structuredPatch
   if (!newString) return edits;
 
   const addedContent = extractAddedContent(oldString, newString);
@@ -285,20 +499,16 @@ function processClaudePayload(payload: ClaudePayload): CapturedEdit[] {
   edits.push({
     timestamp,
     provider: "claudeCode",
-    filePath: filePath,
+    filePath,
     model: "claude",
-
-    // Line-level data
     lines,
-
-    // Aggregate data
     content: addedContent,
     contentHash: computeHash(addedContent),
     contentHashNormalized: computeNormalizedHash(addedContent),
-
-    // Edit context
     editType: determineEditType(oldString, newString),
     oldContent: oldString || undefined,
+    sessionId,
+    toolUseId,
   });
 
   return edits;
@@ -336,7 +546,7 @@ export async function runCapture(): Promise<void> {
 
     if (provider === "cursor") {
       const eventName = event || data.hook_event_name || "afterFileEdit";
-      edits = processCursorPayload(payload as CursorPayload, eventName);
+      edits = await processCursorPayload(payload as CursorPayload, eventName);
     } else if (provider === "claude") {
       edits = processClaudePayload(payload as ClaudePayload);
     }
