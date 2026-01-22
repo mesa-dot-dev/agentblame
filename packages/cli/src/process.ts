@@ -33,7 +33,7 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  orange: "\x1b[38;5;166m", // Mesa Orange - matches gutter color
+  orange: "\x1b[38;2;184;101;64m", // Soft Mesa Orange #b86540
   blue: "\x1b[34m",
 };
 
@@ -289,7 +289,7 @@ export async function runProcess(sha?: string): Promise<void> {
     console.log(`${border}${padRight(aiHeader, aiHeader.length)}${border}`);
 
     for (const attr of result.attributions) {
-      const provider = attr.provider === "cursor" ? "Cursor" : "Claude";
+      const provider = attr.provider === "cursor" ? "Cursor" : attr.provider === "opencode" ? "OpenCode" : "Claude";
       const model = attr.model && attr.model !== "claude" ? attr.model : "";
       const modelStr = model ? ` - ${model}` : "";
       const visibleText = `    ${attr.path}:${attr.startLine}-${attr.endLine} [${provider}${modelStr}]`;

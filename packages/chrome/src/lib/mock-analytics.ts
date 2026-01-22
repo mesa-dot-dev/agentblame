@@ -114,6 +114,23 @@ async function setCachedAnalytics(owner: string, repo: string, data: AnalyticsDa
 }
 
 /**
+ * Clear cached analytics for a repository
+ */
+export async function clearAnalyticsCache(owner: string, repo: string): Promise<void> {
+  const cacheKey = `analytics_${owner}_${repo}`;
+
+  // Clear memory cache
+  memoryCache.delete(cacheKey);
+
+  // Clear storage cache
+  try {
+    await chrome.storage.local.remove(cacheKey);
+  } catch {
+    // Storage access failed, memory cache still cleared
+  }
+}
+
+/**
  * Mock analytics data for UI development
  */
 export const MOCK_ANALYTICS: AnalyticsData = {

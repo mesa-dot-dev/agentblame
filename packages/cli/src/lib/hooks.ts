@@ -22,6 +22,20 @@ export function getClaudeSettingsPath(repoRoot: string): string {
   return path.join(repoRoot, ".claude", "settings.json");
 }
 
+/**
+ * Get the OpenCode plugin directory path for a repo.
+ */
+export function getOpenCodePluginDir(repoRoot: string): string {
+  return path.join(repoRoot, ".opencode", "plugin");
+}
+
+/**
+ * Get the OpenCode agentblame plugin file path for a repo.
+ */
+export function getOpenCodePluginPath(repoRoot: string): string {
+  return path.join(getOpenCodePluginDir(repoRoot), "agentblame.ts");
+}
+
 
 /**
  * Generate the hook command for a given provider.
@@ -34,6 +48,81 @@ function getHookCommand(
   const eventArg = event ? ` --event ${event}` : "";
   return `agentblame capture --provider ${provider}${eventArg}`;
 }
+
+/**
+ * OpenCode plugin template that captures edits and sends to agentblame.
+ * The plugin hooks into tool.execute.after for edit/write operations.
+ */
+const OPENCODE_PLUGIN_TEMPLATE = `import type { Plugin } from "@opencode-ai/plugin"
+import { execSync } from "child_process"
+
+export default (async (ctx: any) => {
+  return {
+    "tool.execute.after": async (input: any, output: any) => {
+      // Only capture edit and write tools
+      if (input?.tool !== "edit" && input?.tool !== "write") {
+        return
+      }
+
+      try {
+        // Get model info from config
+        let model: string | null = null
+        if (ctx?.client?.config?.providers) {
+          try {
+            const configResult = await ctx.client.config.providers()
+            const config = configResult?.data || configResult
+            const activeProvider = config?.connected?.[0]
+            if (activeProvider && config?.default?.[activeProvider]) {
+              const modelId = config.default[activeProvider]
+              // Try to get display name from provider models
+              const provider = config?.providers?.find((p: any) => p.id === activeProvider)
+              const modelInfo = provider?.models?.[modelId]
+              model = modelInfo?.name || modelId
+            }
+          } catch {
+            // Ignore config errors
+          }
+        }
+
+        // Build payload based on tool type
+        const payload: any = {
+          tool: input.tool,
+          sessionID: input.sessionID,
+          callID: input.callID,
+        }
+
+        if (input.tool === "edit") {
+          // Edit tool: has before/after content in metadata
+          payload.filePath = output?.metadata?.filediff?.file || output?.args?.filePath
+          payload.oldString = output?.args?.oldString
+          payload.newString = output?.args?.newString
+          payload.before = output?.metadata?.filediff?.before
+          payload.after = output?.metadata?.filediff?.after
+          payload.diff = output?.metadata?.diff
+        } else if (input.tool === "write") {
+          // Write tool: has content in args
+          payload.filePath = output?.args?.filePath || output?.metadata?.filepath
+          payload.content = output?.args?.content
+        }
+
+        if (model) {
+          payload.model = model
+        }
+
+        // Call agentblame capture with the payload
+        execSync("agentblame capture --provider opencode", {
+          input: JSON.stringify(payload),
+          cwd: ctx?.directory || process.cwd(),
+          stdio: ["pipe", "inherit", "inherit"],
+          timeout: 5000,
+        })
+      } catch {
+        // Silent failure - don't interrupt OpenCode
+      }
+    },
+  }
+}) satisfies Plugin
+`;
 
 /**
  * Install the Cursor hooks at repo-level (.cursor/hooks.json)
@@ -163,6 +252,61 @@ export async function installClaudeHooks(repoRoot: string): Promise<boolean> {
 }
 
 /**
+ * Install the OpenCode hooks at repo-level (.opencode/plugin/agentblame.ts)
+ */
+export async function installOpenCodeHooks(repoRoot: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    console.error("Windows is not supported yet");
+    return false;
+  }
+
+  const pluginDir = getOpenCodePluginDir(repoRoot);
+  const pluginPath = getOpenCodePluginPath(repoRoot);
+
+  try {
+    // Create .opencode/plugin directory if it doesn't exist
+    await fs.promises.mkdir(pluginDir, { recursive: true });
+
+    // Write the plugin file (always overwrite to ensure latest version)
+    await fs.promises.writeFile(pluginPath, OPENCODE_PLUGIN_TEMPLATE, "utf8");
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install OpenCode hooks:", err);
+    return false;
+  }
+}
+
+/**
+ * Check if OpenCode hooks are installed for a repo.
+ */
+export async function areOpenCodeHooksInstalled(repoRoot: string): Promise<boolean> {
+  try {
+    const pluginPath = getOpenCodePluginPath(repoRoot);
+    const content = await fs.promises.readFile(pluginPath, "utf8");
+    return content.includes("agentblame");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Uninstall OpenCode hooks from a repo
+ */
+export async function uninstallOpenCodeHooks(repoRoot: string): Promise<boolean> {
+  try {
+    const pluginPath = getOpenCodePluginPath(repoRoot);
+    if (fs.existsSync(pluginPath)) {
+      await fs.promises.unlink(pluginPath);
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall OpenCode hooks:", err);
+    return false;
+  }
+}
+
+/**
  * Check if Cursor hooks are installed for a repo.
  */
 export async function areCursorHooksInstalled(repoRoot: string): Promise<boolean> {
@@ -206,14 +350,15 @@ export async function areClaudeHooksInstalled(repoRoot: string): Promise<boolean
 }
 
 /**
- * Install all hooks (Cursor and Claude Code) for a repo
+ * Install all hooks (Cursor, Claude Code, and OpenCode) for a repo
  */
 export async function installAllHooks(
   repoRoot: string
-): Promise<{ cursor: boolean; claude: boolean }> {
+): Promise<{ cursor: boolean; claude: boolean; opencode: boolean }> {
   const cursor = await installCursorHooks(repoRoot);
   const claude = await installClaudeHooks(repoRoot);
-  return { cursor, claude };
+  const opencode = await installOpenCodeHooks(repoRoot);
+  return { cursor, claude, opencode };
 }
 
 /**
