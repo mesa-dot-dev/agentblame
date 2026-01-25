@@ -699,28 +699,47 @@ function formatModelName(model: string): string {
     "claude-3-sonnet": "Claude 3 Sonnet",
     "claude-3.5-sonnet": "Claude 3.5 Sonnet",
     "claude-3-haiku": "Claude 3 Haiku",
+    "claude-sonnet-4": "Claude Sonnet 4",
+    "claude-opus-4": "Claude Opus 4",
+    "claude-opus-4-5": "Claude Opus 4.5",
+    "claude-sonnet-4-5": "Claude Sonnet 4.5",
     "gpt-4": "GPT-4",
     "gpt-4o": "GPT-4o",
     "gpt-4-turbo": "GPT-4 Turbo",
+    "gpt-5": "GPT-5",
+    "gpt-5-turbo": "GPT-5 Turbo",
   };
+
+  // Handle versioned models with date suffixes (e.g., "claude-opus-4-5-20251101")
+  // Strip the date suffix first, then check known models
+  const withoutDate = model.replace(/-\d{8}$/, "");
+  if (knownModels[withoutDate]) {
+    return knownModels[withoutDate];
+  }
 
   // Check for exact match first
   if (knownModels[model]) {
     return knownModels[model];
   }
 
-  // Handle versioned model names like "claude-opus-4-5-20251101"
-  // Extract the model family and version, strip the date suffix
-  const datePattern = /-\d{8}$/;
-  let cleaned = model.replace(datePattern, "");
+  let cleaned = model;
 
-  // Convert patterns like "4-5" to "4.5" for version numbers
+  // Strip date suffix (YYYYMMDD) - matches patterns like "-20251101" at the end
+  // Also handles cases where it might appear without a leading dash
+  cleaned = cleaned.replace(/-?\d{8}$/, "");
+
+  // Convert version patterns like "-4-5" to "-4.5" (major-minor versions)
+  // This handles claude-opus-4-5 -> claude-opus-4.5
   cleaned = cleaned.replace(/-(\d+)-(\d+)$/, "-$1.$2");
 
-  // Title case and replace dashes with spaces
+  // Also handle version at end without trailing content: "model-4-5" -> "model 4.5"
+  cleaned = cleaned.replace(/-(\d+)\.(\d+)$/, " $1.$2");
+
+  // Title case and replace remaining dashes with spaces
   return cleaned
     .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
 }
 
 /**
