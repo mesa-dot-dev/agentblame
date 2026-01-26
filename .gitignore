@@ -60,3 +60,6 @@ agentblame-chrome.zip
 # Build artifacts
 packages/chrome/agentblame-chrome-*.zip
 Implementation.md
+
+# OpenCode local plugin (installed by agentblame init)
+.opencode/
