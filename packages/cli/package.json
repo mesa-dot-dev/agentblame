@@ -1,6 +1,6 @@
 {
   "name": "@mesadev/agentblame",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "CLI to track AI-generated vs human-written code",
   "license": "Apache-2.0",
   "repository": {
