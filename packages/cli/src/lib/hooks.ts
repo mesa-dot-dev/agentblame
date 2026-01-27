@@ -232,10 +232,10 @@ export async function installClaudeHooks(repoRoot: string): Promise<boolean> {
         )
     );
 
-    // Add the new hook
+    // Add the new hook with async: true for non-blocking execution
     config.hooks.PostToolUse.push({
       matcher: "Edit|Write|MultiEdit",
-      hooks: [{ type: "command", command: hookCommand }],
+      hooks: [{ type: "command", command: hookCommand, async: true }],
     });
 
     await fs.promises.writeFile(

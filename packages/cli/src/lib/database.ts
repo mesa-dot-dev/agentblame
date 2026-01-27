@@ -204,7 +204,10 @@ export interface InsertEditParams {
 }
 
 /**
- * Insert a new AI edit into the database
+ * Insert a new AI edit into the database.
+ * Uses an explicit transaction to ensure atomicity - either all data
+ * is written (edit + lines) or none. This is especially important
+ * when running async hooks where the process could be interrupted.
  */
 export function insertEdit(params: InsertEditParams): number {
   const db = getDatabase();
@@ -217,41 +220,49 @@ export function insertEdit(params: InsertEditParams): number {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const result = editStmt.run(
-    params.timestamp,
-    params.provider,
-    params.filePath,
-    params.model,
-    params.content,
-    params.contentHash,
-    params.contentHashNormalized,
-    params.editType,
-    params.oldContent || null,
-    params.sessionId || null,
-    params.toolUseId || null
-  );
-
-  const editId = Number(result.lastInsertRowid);
-
-  // Insert lines with line numbers and context
   const lineStmt = db.prepare(`
     INSERT INTO lines (edit_id, content, hash, hash_normalized, line_number, context_before, context_after)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  for (const line of params.lines) {
-    lineStmt.run(
-      editId,
-      line.content,
-      line.hash,
-      line.hashNormalized,
-      line.lineNumber || null,
-      line.contextBefore || null,
-      line.contextAfter || null
+  // Wrap in transaction for atomicity
+  db.exec("BEGIN TRANSACTION");
+  try {
+    const result = editStmt.run(
+      params.timestamp,
+      params.provider,
+      params.filePath,
+      params.model,
+      params.content,
+      params.contentHash,
+      params.contentHashNormalized,
+      params.editType,
+      params.oldContent || null,
+      params.sessionId || null,
+      params.toolUseId || null
     );
-  }
 
-  return editId;
+    const editId = Number(result.lastInsertRowid);
+
+    // Insert lines with line numbers and context
+    for (const line of params.lines) {
+      lineStmt.run(
+        editId,
+        line.content,
+        line.hash,
+        line.hashNormalized,
+        line.lineNumber || null,
+        line.contextBefore || null,
+        line.contextAfter || null
+      );
+    }
+
+    db.exec("COMMIT");
+    return editId;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 // =============================================================================
