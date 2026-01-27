@@ -510,6 +510,11 @@ async function processClaudePayload(payload: ClaudePayload): Promise<CapturedEdi
   if (toolName === "edit" || toolName === "multiedit") {
     if (!toolResponse?.structuredPatch || toolResponse.structuredPatch.length === 0) {
       // No structuredPatch - skip this capture to avoid incorrect attribution
+      // Log for debugging missing captures
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame] Skipping ${toolName} for ${filePath}: no structuredPatch in tool_response`);
+        console.error(`[agentblame] tool_response keys: ${toolResponse ? Object.keys(toolResponse).join(", ") : "null"}`);
+      }
       return edits;
     }
 
@@ -762,17 +767,32 @@ export async function runCapture(): Promise<void> {
     }
 
     // Save all edits to SQLite database
+    if (process.env.AGENTBLAME_DEBUG && edits.length === 0) {
+      console.error(`[agentblame] No edits extracted from ${provider} payload`);
+    }
+
     for (const edit of edits) {
       // Find the agentblame directory for this file
       const agentblameDir = findAgentBlameDir(edit.filePath);
       if (!agentblameDir) {
         // File is not in an initialized repo, skip silently
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] No agentblame dir found for ${edit.filePath}`);
+        }
         continue;
       }
 
       // Set the database directory and save
       setAgentBlameDir(agentblameDir);
-      saveEdit(edit);
+      try {
+        saveEdit(edit);
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] Saved edit for ${edit.filePath}: ${edit.lines.length} lines`);
+        }
+      } catch (saveErr) {
+        // Log database errors even without debug mode since they indicate lost data
+        console.error(`[agentblame] Failed to save edit for ${edit.filePath}:`, saveErr);
+      }
     }
 
     process.exit(0);

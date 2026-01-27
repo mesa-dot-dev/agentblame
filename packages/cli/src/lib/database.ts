@@ -156,6 +156,9 @@ export function getDatabase(): Database {
   // Enable foreign keys and WAL mode for better performance
   dbInstance.exec("PRAGMA foreign_keys = ON");
   dbInstance.exec("PRAGMA journal_mode = WAL");
+  // Set busy timeout to handle concurrent writes from async hooks
+  // Without this, concurrent capture processes get SQLITE_BUSY and fail silently
+  dbInstance.exec("PRAGMA busy_timeout = 5000");
 
   // Create tables and indexes
   dbInstance.exec(SCHEMA);
