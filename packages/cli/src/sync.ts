@@ -559,10 +559,9 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
     console.log(
       `\nSummary: Transferred ${totalTransferred} attribution(s) for ${successCount} merge(s)`,
     );
-
-    // Push notes
-    pushNotes(repoRoot, options);
   } else {
     console.log("\nNo attributions were transferred.");
   }
+
+  pushNotes(repoRoot, options);
 }
