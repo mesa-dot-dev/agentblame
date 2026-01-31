@@ -10,7 +10,7 @@ import {
   injectSidebarItem,
   removeSidebarItem,
   handleHashChange,
-} from "./analytics-tab";
+} from "./analyticsTab";
 
 // Track if we've already set up listeners (avoid duplicates)
 let listenersInitialized = false;

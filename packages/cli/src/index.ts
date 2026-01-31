@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Agent Blame CLI
+ * Agent Blame CLI v3
  *
  * Commands:
  *   agentblame init              - Set up hooks and configuration
@@ -28,17 +28,36 @@ import {
   uninstallOpenCodeHooks,
   uninstallGitHook,
   uninstallGitHubAction,
-  getRepoRoot,
-  runGit,
-  configureNotesSync,
-  removeNotesSync,
+} from "./lib/hooks";
+import { getRepoRoot, runGit } from "./lib/git/gitCli";
+import { configureNotesSync, removeNotesSync } from "./lib/git/gitConfig";
+import {
   initDatabase,
-  setAgentBlameDir,
-  getAgentBlameDirForRepo,
-  getPendingEditCount,
-  getRecentPendingEdits,
+  setDatabasePath,
+  getStats,
+  getRecentSessions,
   cleanupOldEntries,
-} from "./lib";
+  resetDatabase,
+  getToolCallsForSession,
+} from "./lib/database";
+import {
+  getDatabasePath,
+  ensureAgentBlameDirs,
+  getAgentBlameGitDir,
+  cleanupStaleWorkingDirs,
+  getActiveBaseShas,
+  readWorkingLog,
+  getGitHead,
+} from "./lib/storage";
+import { initAnalytics } from "./lib/analytics";
+import {
+  getConfig,
+  setConfig,
+  listConfig,
+  VALID_CONFIG_KEYS,
+  parseConfigValue,
+  type AgentBlameConfig,
+} from "./lib/config";
 
 const ANALYTICS_TAG = "agentblame-analytics-anchor";
 
@@ -83,6 +102,15 @@ async function main(): Promise<void> {
     case "prune":
       await runPrune();
       break;
+    case "migrate":
+      await runMigrate();
+      break;
+    case "debug":
+      await runDebug();
+      break;
+    case "config":
+      await runConfig(args.slice(1));
+      break;
     case "--version":
     case "-v":
       printVersion();
@@ -101,7 +129,7 @@ async function main(): Promise<void> {
 
 function printHelp(): void {
   console.log(`
-Agent Blame - Track AI-generated code in your commits
+Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
   agentblame init              Set up hooks for current repo
@@ -111,13 +139,24 @@ Usage:
   agentblame blame <file>      Show AI attribution for a file
   agentblame blame --summary   Show summary only
   agentblame blame --json      Output as JSON
-  agentblame status            Show pending AI edits
+  agentblame blame --verbose   Show full prompts (not truncated)
+  agentblame status            Show session and capture stats
   agentblame sync              Transfer notes after squash/rebase
+  agentblame config            Show all configuration
+  agentblame config get <key>  Get a config value
+  agentblame config set <key> <value>  Set a config value
   agentblame prune             Remove old entries from database
+  agentblame migrate           Migrate from v2 to v3 schema
+  agentblame debug             Show detailed debug info
+
+Configuration Keys:
+  storePromptContent    Store actual prompt text (default: false)
+                        Set to true to store full prompt content
 
 Examples:
   agentblame init
   agentblame blame src/index.ts
+  agentblame config set storePromptContent false
 `);
 }
 
@@ -133,19 +172,19 @@ function printVersion(): void {
 
 /**
  * Create the analytics anchor tag on the root commit.
- * This tag is used to store repository-wide analytics.
  */
 async function createAnalyticsTag(repoRoot: string): Promise<boolean> {
   try {
-    // Check if tag already exists
     const existingTag = await runGit(repoRoot, ["tag", "-l", ANALYTICS_TAG], 5000);
     if (existingTag.stdout.trim()) {
-      // Tag already exists
       return true;
     }
 
-    // Get the root commit(s)
-    const rootResult = await runGit(repoRoot, ["rev-list", "--max-parents=0", "HEAD"], 10000);
+    const rootResult = await runGit(
+      repoRoot,
+      ["rev-list", "--max-parents=0", "HEAD"],
+      10000
+    );
     if (rootResult.exitCode !== 0 || !rootResult.stdout.trim()) {
       return false;
     }
@@ -155,16 +194,9 @@ async function createAnalyticsTag(repoRoot: string): Promise<boolean> {
       return false;
     }
 
-    // Use the first root commit
     const rootSha = rootLines[0];
-
-    // Create the tag
     const tagResult = await runGit(repoRoot, ["tag", ANALYTICS_TAG, rootSha], 5000);
-    if (tagResult.exitCode !== 0) {
-      return false;
-    }
-
-    return true;
+    return tagResult.exitCode === 0;
   } catch {
     return false;
   }
@@ -173,7 +205,11 @@ async function createAnalyticsTag(repoRoot: string): Promise<boolean> {
 /**
  * Clean up global hooks and database from previous versions.
  */
-async function cleanupGlobalInstall(): Promise<{ cursor: boolean; claude: boolean; db: boolean }> {
+async function cleanupGlobalInstall(): Promise<{
+  cursor: boolean;
+  claude: boolean;
+  db: boolean;
+}> {
   const results = { cursor: false, claude: false, db: false };
   const home = os.homedir();
 
@@ -184,10 +220,15 @@ async function cleanupGlobalInstall(): Promise<{ cursor: boolean; claude: boolea
       const config = JSON.parse(await fs.promises.readFile(globalCursorHooks, "utf8"));
       if (config.hooks?.afterFileEdit) {
         config.hooks.afterFileEdit = config.hooks.afterFileEdit.filter(
-          (h: any) => !h?.command?.includes("agentblame") && !h?.command?.includes("capture")
+          (h: any) =>
+            !h?.command?.includes("agentblame") && !h?.command?.includes("capture")
         );
       }
-      await fs.promises.writeFile(globalCursorHooks, JSON.stringify(config, null, 2), "utf8");
+      await fs.promises.writeFile(
+        globalCursorHooks,
+        JSON.stringify(config, null, 2),
+        "utf8"
+      );
       results.cursor = true;
     }
   } catch {
@@ -198,22 +239,31 @@ async function cleanupGlobalInstall(): Promise<{ cursor: boolean; claude: boolea
   const globalClaudeSettings = path.join(home, ".claude", "settings.json");
   try {
     if (fs.existsSync(globalClaudeSettings)) {
-      const config = JSON.parse(await fs.promises.readFile(globalClaudeSettings, "utf8"));
+      const config = JSON.parse(
+        await fs.promises.readFile(globalClaudeSettings, "utf8")
+      );
       if (config.hooks?.PostToolUse) {
         config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
-          (h: any) => !h?.hooks?.some(
-            (hh: any) => hh?.command?.includes("agentblame") || hh?.command?.includes("capture")
-          )
+          (h: any) =>
+            !h?.hooks?.some(
+              (hh: any) =>
+                hh?.command?.includes("agentblame") ||
+                hh?.command?.includes("capture")
+            )
         );
       }
-      await fs.promises.writeFile(globalClaudeSettings, JSON.stringify(config, null, 2), "utf8");
+      await fs.promises.writeFile(
+        globalClaudeSettings,
+        JSON.stringify(config, null, 2),
+        "utf8"
+      );
       results.claude = true;
     }
   } catch {
     // Ignore errors
   }
 
-  // Clean up global database
+  // Clean up global database (old location)
   const globalDb = path.join(home, ".agentblame");
   try {
     if (fs.existsSync(globalDb)) {
@@ -232,9 +282,10 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   // Check if Bun is installed (required for hooks)
   if (!isBunInstalled()) {
-    const installCmd = process.platform === "win32"
-      ? "powershell -c \"irm bun.sh/install.ps1 | iex\""
-      : "curl -fsSL https://bun.sh/install | bash";
+    const installCmd =
+      process.platform === "win32"
+        ? 'powershell -c "irm bun.sh/install.ps1 | iex"'
+        : "curl -fsSL https://bun.sh/install | bash";
 
     console.log("");
     console.log("  \x1b[31m✗\x1b[0m Bun is required but not installed");
@@ -262,7 +313,7 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame\x1b[0m");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame v3\x1b[0m");
   console.log("  \x1b[2mTrack AI-generated code in your commits\x1b[0m");
   console.log("");
 
@@ -286,17 +337,26 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   // Track results
   const results: { name: string; success: boolean }[] = [];
 
-  // Create .agentblame directory and initialize SQLite database
+  // Create .git/agentblame directory and initialize SQLite database
   try {
-    const agentblameDir = getAgentBlameDirForRepo(repoRoot);
-    setAgentBlameDir(agentblameDir);
+    ensureAgentBlameDirs(repoRoot);
+    const dbPath = getDatabasePath(repoRoot);
+    setDatabasePath(dbPath);
     initDatabase();
-    results.push({ name: "Database", success: true });
+    results.push({ name: "Database (.git/agentblame/)", success: true });
   } catch (err) {
     results.push({ name: "Database", success: false });
   }
 
-  // Add .agentblame/ and .opencode/ to .gitignore
+  // Initialize analytics
+  try {
+    await initAnalytics(repoRoot);
+    results.push({ name: "Analytics", success: true });
+  } catch {
+    results.push({ name: "Analytics", success: false });
+  }
+
+  // Add old .agentblame/ to .gitignore (for backwards compatibility)
   try {
     const gitignorePath = path.join(repoRoot, ".gitignore");
     let gitignoreContent = "";
@@ -305,16 +365,17 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     }
     let entriesToAdd = "";
     if (!gitignoreContent.includes(".agentblame")) {
-      entriesToAdd += "\n# Agent Blame local database\n.agentblame/\n";
+      entriesToAdd += "\n# Agent Blame local database (legacy)\n.agentblame/\n";
     }
     if (!gitignoreContent.includes(".opencode")) {
-      entriesToAdd += "\n# OpenCode local plugin (installed by agentblame init)\n.opencode/\n";
+      entriesToAdd +=
+        "\n# OpenCode local plugin (installed by agentblame init)\n.opencode/\n";
     }
     if (entriesToAdd) {
       await fs.promises.appendFile(gitignorePath, entriesToAdd);
     }
     results.push({ name: "Updated .gitignore", success: true });
-  } catch (err) {
+  } catch {
     results.push({ name: "Updated .gitignore", success: false });
   }
 
@@ -368,15 +429,20 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   console.log("");
   console.log("  \x1b[1mNext steps:\x1b[0m");
-  console.log("  \x1b[33m1.\x1b[0m Commit \x1b[36m.github/workflows/agentblame.yml\x1b[0m to enable PR analytics");
+  console.log(
+    "  \x1b[33m1.\x1b[0m Commit \x1b[36m.github/workflows/agentblame.yml\x1b[0m to enable PR analytics"
+  );
   console.log("  \x1b[33m2.\x1b[0m Restart Cursor or Claude Code to pick up hooks");
   console.log("  \x1b[33m3.\x1b[0m Make AI edits and commit your changes");
-  console.log("  \x1b[33m4.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution");
+  console.log(
+    "  \x1b[33m4.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution"
+  );
   console.log("");
 }
 
 async function runClean(uninstallArgs: string[] = []): Promise<void> {
-  const forceCleanup = uninstallArgs.includes("--force") || uninstallArgs.includes("-f");
+  const forceCleanup =
+    uninstallArgs.includes("--force") || uninstallArgs.includes("-f");
 
   // Validate we're in a git repo
   const repoRoot = await getRepoRoot(process.cwd());
@@ -435,17 +501,28 @@ async function runClean(uninstallArgs: string[] = []): Promise<void> {
   const githubActionSuccess = await uninstallGitHubAction(repoRoot);
   results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
 
-  // Remove .agentblame directory (database)
-  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
+  // Remove .git/agentblame directory (v3 location)
+  const agentBlameGitDir = getAgentBlameGitDir(repoRoot);
   let dbSuccess = true;
   try {
-    if (fs.existsSync(agentblameDir)) {
-      await fs.promises.rm(agentblameDir, { recursive: true });
+    if (fs.existsSync(agentBlameGitDir)) {
+      await fs.promises.rm(agentBlameGitDir, { recursive: true });
     }
   } catch {
     dbSuccess = false;
   }
-  results.push({ name: "Database", success: dbSuccess });
+  results.push({ name: "Database (.git/agentblame/)", success: dbSuccess });
+
+  // Also remove legacy .agentblame directory
+  const legacyDir = path.join(repoRoot, ".agentblame");
+  try {
+    if (fs.existsSync(legacyDir)) {
+      await fs.promises.rm(legacyDir, { recursive: true });
+      results.push({ name: "Legacy database (.agentblame/)", success: true });
+    }
+  } catch {
+    // Ignore
+  }
 
   // Print results
   console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
@@ -473,7 +550,7 @@ async function runClean(uninstallArgs: string[] = []): Promise<void> {
 
 async function runBlame(args: string[]): Promise<void> {
   // Parse options
-  const options: { json?: boolean; summary?: boolean } = {};
+  const options: { json?: boolean; summary?: boolean; showPrompts?: boolean; verbose?: boolean } = {};
   let filePath: string | undefined;
 
   for (const arg of args) {
@@ -481,13 +558,17 @@ async function runBlame(args: string[]): Promise<void> {
       options.json = true;
     } else if (arg === "--summary") {
       options.summary = true;
+    } else if (arg === "--prompts" || arg === "-p") {
+      options.showPrompts = true;
+    } else if (arg === "--verbose" || arg === "-v") {
+      options.verbose = true;
     } else if (!arg.startsWith("-")) {
       filePath = arg;
     }
   }
 
   if (!filePath) {
-    console.error("Usage: agentblame blame [--json|--summary] <file>");
+    console.error("Usage: agentblame blame [--json|--summary|--prompts|--verbose] <file>");
     process.exit(1);
   }
 
@@ -516,30 +597,113 @@ async function runStatus(): Promise<void> {
     process.exit(1);
   }
 
-  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
-  setAgentBlameDir(agentblameDir);
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
 
-  console.log("\nAgent Blame Status\n");
+  console.log("\nAgent Blame v3 Status\n");
 
-  const pendingCount = getPendingEditCount();
+  try {
+    const stats = getStats();
+    console.log(`Sessions: ${stats.sessions}`);
+    console.log(`Prompts:  ${stats.prompts}`);
+    console.log(`Tool Calls: ${stats.toolCalls}`);
 
-  console.log(`Pending AI edits: ${pendingCount}`);
+    if (stats.sessions > 0) {
+      console.log("\nRecent sessions:");
+      const recent = getRecentSessions(5);
+      for (const session of recent) {
+        const time = new Date(session.createdAt).toLocaleTimeString();
+        const agent = session.agent;
+        const model = session.model || "";
+        const committed = session.firstCommitSha ? "committed" : "pending";
+        console.log(
+          `  [${agent}] ${session.id.slice(0, 8)} - ${model || "unknown"} (${committed}) at ${time}`
+        );
+      }
 
-  if (pendingCount > 0) {
-    console.log("\nRecent pending edits:");
-    const recent = getRecentPendingEdits(5);
-    for (const edit of recent) {
-      const time = new Date(edit.timestamp).toLocaleTimeString();
-      const file = edit.filePath.split("/").pop();
-      console.log(`  [${edit.provider}] ${file} at ${time}`);
+      if (stats.sessions > 5) {
+        console.log(`  ... and ${stats.sessions - 5} more`);
+      }
     }
-
-    if (pendingCount > 5) {
-      console.log(`  ... and ${pendingCount - 5} more`);
-    }
+  } catch (err) {
+    console.log("  No database found. Run 'agentblame init' first.");
   }
 
   console.log("");
+}
+
+async function runConfig(args: string[]): Promise<void> {
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (!repoRoot) {
+    console.error("Not in a git repository");
+    process.exit(1);
+  }
+
+  const subcommand = args[0];
+  const key = args[1] as keyof AgentBlameConfig | undefined;
+  const value = args[2];
+
+  // No subcommand - list all config
+  if (!subcommand) {
+    console.log("\nAgent Blame Configuration\n");
+    const configs = await listConfig(repoRoot);
+    for (const cfg of configs) {
+      const status = cfg.isDefault ? "(default)" : "(custom)";
+      console.log(`  ${cfg.key}: ${cfg.value} ${status}`);
+    }
+    console.log("\nUse 'agentblame config set <key> <value>' to change settings.");
+    console.log("");
+    return;
+  }
+
+  // Get a config value
+  if (subcommand === "get") {
+    if (!key) {
+      console.error("Usage: agentblame config get <key>");
+      console.error(`Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`);
+      process.exit(1);
+    }
+
+    if (!VALID_CONFIG_KEYS.includes(key)) {
+      console.error(`Unknown config key: ${key}`);
+      console.error(`Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`);
+      process.exit(1);
+    }
+
+    const currentValue = await getConfig(repoRoot, key);
+    console.log(String(currentValue));
+    return;
+  }
+
+  // Set a config value
+  if (subcommand === "set") {
+    if (!key || value === undefined) {
+      console.error("Usage: agentblame config set <key> <value>");
+      console.error(`Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`);
+      process.exit(1);
+    }
+
+    if (!VALID_CONFIG_KEYS.includes(key)) {
+      console.error(`Unknown config key: ${key}`);
+      console.error(`Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`);
+      process.exit(1);
+    }
+
+    const parsedValue = parseConfigValue(key, value);
+    if (parsedValue === null) {
+      console.error(`Invalid value for ${key}: ${value}`);
+      console.error("For boolean settings, use: true/false, yes/no, or 1/0");
+      process.exit(1);
+    }
+
+    await setConfig(repoRoot, key, parsedValue);
+    console.log(`Set ${key} = ${parsedValue}`);
+    return;
+  }
+
+  console.error(`Unknown config subcommand: ${subcommand}`);
+  console.error("Usage: agentblame config [get|set] <key> [value]");
+  process.exit(1);
 }
 
 async function runPrune(): Promise<void> {
@@ -550,16 +714,182 @@ async function runPrune(): Promise<void> {
     process.exit(1);
   }
 
-  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
-  setAgentBlameDir(agentblameDir);
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
 
   console.log("\nAgent Blame Prune\n");
 
-  const result = cleanupOldEntries();
+  // Clean up old database entries
+  const dbResult = cleanupOldEntries();
+  console.log(`  Database: Removed ${dbResult.removed} sessions, kept ${dbResult.kept}`);
 
-  console.log(`  Removed: ${result.removed} old entries`);
-  console.log(`  Kept: ${result.kept} entries`);
+  // Clean up stale working directories
+  const workingResult = await cleanupStaleWorkingDirs(repoRoot);
+  console.log(
+    `  Working dirs: Cleaned ${workingResult.cleaned.length}, kept ${workingResult.kept.length}`
+  );
+
   console.log("\nPrune complete!");
+}
+
+async function runMigrate(): Promise<void> {
+  // Find repo root
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (!repoRoot) {
+    console.error("Not in a git repository");
+    process.exit(1);
+  }
+
+  console.log("\nAgent Blame v3 Migration\n");
+
+  // Ensure new directories exist
+  ensureAgentBlameDirs(repoRoot);
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
+
+  // Reset database to v3 schema
+  console.log("  Resetting database to v3 schema...");
+  resetDatabase();
+  console.log("  \x1b[32m✓\x1b[0m Database migrated");
+
+  // Initialize analytics
+  console.log("  Initializing analytics...");
+  await initAnalytics(repoRoot);
+  console.log("  \x1b[32m✓\x1b[0m Analytics initialized");
+
+  // Remove legacy .agentblame directory if it exists
+  const legacyDir = path.join(repoRoot, ".agentblame");
+  if (fs.existsSync(legacyDir)) {
+    console.log("  Removing legacy database...");
+    await fs.promises.rm(legacyDir, { recursive: true });
+    console.log("  \x1b[32m✓\x1b[0m Legacy database removed");
+  }
+
+  console.log("\n\x1b[32m✓\x1b[0m Migration complete!");
+  console.log("\nNote: Existing v2 git notes remain readable.");
+  console.log("New commits will use the v3 format.\n");
+}
+
+async function runDebug(): Promise<void> {
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (!repoRoot) {
+    console.error("Not in a git repository");
+    process.exit(1);
+  }
+
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
+
+  console.log("\n\x1b[1mAgent Blame Debug Info\x1b[0m\n");
+
+  // Show repo info
+  console.log(`\x1b[36mRepository:\x1b[0m ${repoRoot}`);
+
+  // Show current HEAD
+  const head = await getGitHead(repoRoot);
+  console.log(`\x1b[36mCurrent HEAD:\x1b[0m ${head || "none"}`);
+
+  // Show database stats
+  console.log("\n\x1b[1mDatabase:\x1b[0m");
+  try {
+    const stats = getStats();
+    console.log(`  Sessions: ${stats.sessions}`);
+    console.log(`  Prompts: ${stats.prompts}`);
+    console.log(`  Tool Calls: ${stats.toolCalls}`);
+
+    // Show recent sessions with their tool calls
+    if (stats.sessions > 0) {
+      console.log("\n\x1b[1mRecent Sessions:\x1b[0m");
+      const sessions = getRecentSessions(5);
+      for (const session of sessions) {
+        console.log(`\n  \x1b[33m${session.id}\x1b[0m`);
+        console.log(`    Agent: ${session.agent}`);
+        console.log(`    Model: ${session.model || "unknown"}`);
+        console.log(`    Created: ${session.createdAt}`);
+        console.log(`    First Commit: ${session.firstCommitSha || "pending"}`);
+
+        // Show tool calls for this session
+        const toolCalls = getToolCallsForSession(session.id);
+        if (toolCalls.length > 0) {
+          // Count tool types (all names are lowercase)
+          const fileModifyingNames = ["edit", "write", "multiedit"];
+          const fileModifying = toolCalls.filter(tc =>
+            fileModifyingNames.includes(tc.toolName)
+          );
+          const readOnly = toolCalls.filter(tc =>
+            !fileModifyingNames.includes(tc.toolName)
+          );
+
+          console.log(`    Tool Calls: ${toolCalls.length} total (${fileModifying.length} edits, ${readOnly.length} other)`);
+          console.log(`    Sequence:`);
+
+          for (const tc of toolCalls.slice(0, 10)) {
+            const isEdit = fileModifyingNames.includes(tc.toolName);
+            const icon = isEdit ? "✏️" : "🔍";
+            const filePart = tc.filePath ? ` → ${tc.filePath}` : "";
+            console.log(`      ${icon} ${tc.toolName}${filePart}`);
+          }
+          if (toolCalls.length > 10) {
+            console.log(`      ... and ${toolCalls.length - 10} more`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.log(`  \x1b[31mError:\x1b[0m ${err}`);
+  }
+
+  // Show working directories
+  console.log("\n\x1b[1mWorking Directories:\x1b[0m");
+  const baseShas = getActiveBaseShas(repoRoot);
+  if (baseShas.length === 0) {
+    console.log("  \x1b[33mNo working directories found\x1b[0m");
+    console.log("  This means no AI edits have been captured since the last commit.");
+  } else {
+    for (const baseSha of baseShas) {
+      console.log(`\n  \x1b[33m${baseSha}\x1b[0m`);
+      const entries = readWorkingLog(repoRoot, baseSha);
+      if (entries.length === 0) {
+        console.log("    \x1b[31mEmpty (no snapshots.jsonl entries)\x1b[0m");
+      } else {
+        console.log(`    Entries: ${entries.length}`);
+        for (const entry of entries.slice(0, 5)) {
+          const sessionStr = entry.session ? entry.session.slice(0, 8) : "human";
+          console.log(`      - ${entry.file} (${entry.type}, session: ${sessionStr})`);
+        }
+        if (entries.length > 5) {
+          console.log(`      ... and ${entries.length - 5} more`);
+        }
+      }
+    }
+  }
+
+  // Check agentblame directory structure
+  console.log("\n\x1b[1mDirectory Structure:\x1b[0m");
+  const agentBlameDir = getAgentBlameGitDir(repoRoot);
+  if (fs.existsSync(agentBlameDir)) {
+    console.log(`  ${agentBlameDir}/`);
+    try {
+      const entries = fs.readdirSync(agentBlameDir);
+      for (const entry of entries) {
+        const entryPath = path.join(agentBlameDir, entry);
+        const stat = fs.statSync(entryPath);
+        if (stat.isDirectory()) {
+          const subEntries = fs.readdirSync(entryPath);
+          console.log(`    ${entry}/ (${subEntries.length} items)`);
+        } else {
+          console.log(`    ${entry} (${stat.size} bytes)`);
+        }
+      }
+    } catch (err) {
+      console.log(`    \x1b[31mError reading directory:\x1b[0m ${err}`);
+    }
+  } else {
+    console.log(`  \x1b[31mNot found:\x1b[0m ${agentBlameDir}`);
+    console.log("  Run 'agentblame init' to set up the database.");
+  }
+
+  console.log("");
 }
 
 main().catch((err) => {

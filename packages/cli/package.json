@@ -1,6 +1,6 @@
 {
   "name": "@mesadev/agentblame",
-  "version": "0.2.11",
+  "version": "3.0.0",
   "description": "CLI to track AI-generated vs human-written code",
   "license": "Apache-2.0",
   "repository": {
@@ -35,7 +35,8 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "dev": "bun run build && bun run dist/index.js"
+    "dev": "bun run build && bun run dist/index.js",
+    "dev:post-merge": "./scripts/dev-post-merge.sh"
   },
   "dependencies": {
     "diff": "^8.0.2"

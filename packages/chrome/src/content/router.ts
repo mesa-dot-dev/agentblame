@@ -8,9 +8,10 @@
  * Handles navigation detection via History API interception.
  */
 
-import type { GitNotesAttribution, LineAttribution } from "../types";
+import type { GitNotesAttribution, LineAttribution, PromptInfo } from "../types";
+import { MIN_SUPPORTED_VERSION } from "../types";
 import { getToken, isEnabled } from "../lib/storage";
-import { GitHubAPI } from "../lib/github-api";
+import { GitHubAPI } from "../lib/githubApi";
 import {
   extractPRContext,
   getDiffContainers,
@@ -24,13 +25,14 @@ import {
   hideLoading,
   showError,
   isFilesChangedTab,
-} from "./github-dom";
+  initTooltip,
+} from "./githubDom";
 import {
   isInsightsPage,
   injectSidebarItem,
   removeSidebarItem,
   handleHashChange,
-} from "./analytics-tab";
+} from "./analyticsTab";
 
 // =============================================================================
 // URL Detection
@@ -115,7 +117,7 @@ async function processPRPage(): Promise<void> {
       return;
     }
 
-    const notes = await api.fetchNotesForCommits(
+    const notesResult = await api.fetchNotesForCommits(
       context.owner,
       context.repo,
       commits,
@@ -123,9 +125,21 @@ async function processPRPage(): Promise<void> {
 
     hideLoading();
 
-    if (notes.size === 0) return;
+    // Check for unsupported versions
+    if (notesResult.hasUnsupportedVersions) {
+      const versions = notesResult.unsupportedVersionsFound.join(", ");
+      showError(
+        `Unsupported attribution format (v${versions}). Agent Blame ${MIN_SUPPORTED_VERSION}.0+ required. Please update your CLI and re-process commits.`
+      );
+      return;
+    }
 
-    const attributionMap = buildAttributionMap(notes);
+    if (notesResult.notes.size === 0) return;
+
+    const { lineMap: attributionMap, prompts } = buildAttributionMap(notesResult.notes);
+
+    // Initialize tooltip system for prompt badges
+    initTooltip();
 
     let totalLines = 0;
     let aiGeneratedLines = 0;
@@ -161,6 +175,7 @@ async function processPRPage(): Promise<void> {
     injectPRSummary({
       total: totalLines,
       aiGenerated: aiGeneratedLines,
+      prompts,
     });
 
     hasProcessedSuccessfully = true;
@@ -171,27 +186,95 @@ async function processPRPage(): Promise<void> {
   }
 }
 
+interface AttributionResult {
+  lineMap: Map<string, LineAttribution>;
+  prompts: PromptInfo[];
+}
+
 function buildAttributionMap(
   notes: Map<string, GitNotesAttribution>,
-): Map<string, LineAttribution> {
-  const map = new Map<string, LineAttribution>();
+): AttributionResult {
+  const lineMap = new Map<string, LineAttribution>();
+  const prompts: PromptInfo[] = [];
+
+  // Build prompt index map: sessionId:promptId -> P1, P2, etc.
+  const promptIndexMap = new Map<string, string>();
+  let promptCounter = 1;
 
   for (const [_commitSha, note] of notes) {
-    if (!note.attributions) continue;
+    // V3 format: uses files with aiRanges
+    if (note.files && note.sessions) {
+      // First pass: collect all unique prompts and assign indices
+      for (const [sessionId, session] of Object.entries(note.sessions)) {
+        if (session.prompts && Array.isArray(session.prompts)) {
+          for (const prompt of session.prompts) {
+            const promptKey = `${sessionId}:${prompt.id ?? "null"}`;
+            if (!promptIndexMap.has(promptKey)) {
+              const promptIdx = `P${promptCounter}`;
+              promptIndexMap.set(promptKey, promptIdx);
+              prompts.push({
+                index: promptIdx,
+                agent: session.agent,
+                model: session.model,
+                content: prompt.content,
+                tools: prompt.tools,
+              });
+              promptCounter++;
+            }
+          }
+        } else if (session.prompts && typeof session.prompts === "string") {
+          // Legacy string format
+          const promptKey = `${sessionId}:null`;
+          if (!promptIndexMap.has(promptKey)) {
+            const promptIdx = `P${promptCounter}`;
+            promptIndexMap.set(promptKey, promptIdx);
+            prompts.push({
+              index: promptIdx,
+              agent: session.agent,
+              model: session.model,
+              content: session.prompts,
+            });
+            promptCounter++;
+          }
+        }
+      }
 
-    for (const attr of note.attributions) {
-      for (let line = attr.startLine; line <= attr.endLine; line++) {
-        const key = `${attr.path}:${line}`;
-        map.set(key, {
-          category: attr.category,
-          provider: attr.provider,
-          model: attr.model,
-        });
+      // Second pass: build line attribution with prompt indices
+      for (const [filePath, fileAttr] of Object.entries(note.files)) {
+        for (const range of fileAttr.aiRanges) {
+          const session = note.sessions[range.sessionId];
+          const promptKey = `${range.sessionId}:${range.promptId ?? "null"}`;
+          const promptIndex = promptIndexMap.get(promptKey);
+
+          // Extract prompt content for tooltip
+          let promptContent: string | undefined;
+          if (session?.prompts && Array.isArray(session.prompts) && range.promptId != null) {
+            const prompt = session.prompts.find(p => p.id === range.promptId);
+            if (prompt?.content) {
+              promptContent = prompt.content;
+            }
+          } else if (session?.prompts && typeof session.prompts === 'string') {
+            promptContent = session.prompts;
+          }
+
+          // Add entry for each line in the range
+          for (let line = range.startLine; line <= range.endLine; line++) {
+            const key = `${filePath}:${line}`;
+            lineMap.set(key, {
+              category: "ai_generated",
+              provider: session?.agent || "unknown",
+              model: session?.model || null,
+              promptIndex,
+              sessionId: range.sessionId,
+              promptContent,
+            });
+          }
+        }
       }
     }
   }
 
-  return map;
+  return { lineMap, prompts };
 }
 
 function findAttribution(

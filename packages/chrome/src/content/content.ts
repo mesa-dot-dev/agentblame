@@ -5,8 +5,9 @@
  */
 
 import type { GitNotesAttribution, LineAttribution } from "../types";
+import { MIN_SUPPORTED_VERSION } from "../types";
 import { getToken, isEnabled } from "../lib/storage";
-import { GitHubAPI } from "../lib/github-api";
+import { GitHubAPI } from "../lib/githubApi";
 import {
   extractPRContext,
   getDiffContainers,
@@ -20,7 +21,8 @@ import {
   hideLoading,
   showError,
   isFilesChangedTab,
-} from "./github-dom";
+  initTooltip,
+} from "./githubDom";
 
 // State
 let api: GitHubAPI | null = null;
@@ -166,7 +168,7 @@ async function processPage(): Promise<void> {
     log(`Fetching notes for ${commits.length} commit(s)`);
 
     // Fetch notes for all commits
-    const notes = await api.fetchNotesForCommits(
+    const notesResult = await api.fetchNotesForCommits(
       context.owner,
       context.repo,
       commits,
@@ -174,15 +176,28 @@ async function processPage(): Promise<void> {
 
     hideLoading();
 
-    if (notes.size === 0) {
+    // Check for unsupported versions
+    if (notesResult.hasUnsupportedVersions) {
+      const versions = notesResult.unsupportedVersionsFound.join(", ");
+      showError(
+        `Unsupported attribution format (v${versions}). Agent Blame ${MIN_SUPPORTED_VERSION}.0+ required. Please update your CLI and re-process commits.`
+      );
+      log(`Unsupported versions found: ${versions}`);
+      return;
+    }
+
+    if (notesResult.notes.size === 0) {
       log("No attribution notes found for any commits");
       return;
     }
 
-    log(`Found notes for ${notes.size} commit(s)`);
+    log(`Found notes for ${notesResult.notes.size} commit(s)`);
 
     // Build attribution lookup
-    const attributionMap = buildAttributionMap(notes);
+    const attributionMap = buildAttributionMap(notesResult.notes);
+
+    // Initialize tooltip system for prompt badges
+    initTooltip();
 
     // Process each diff container
     let totalLines = 0;
@@ -221,10 +236,12 @@ async function processPage(): Promise<void> {
       }
     }
 
-    // Add PR summary
+    // Add PR summary with commit details
     injectPRSummary({
       total: totalLines,
       aiGenerated: aiGeneratedLines,
+      notes: notesResult.notes,
+      commits: commits,
     });
 
     log(`Done: ${aiGeneratedLines}/${totalLines} lines attributed to AI`);
@@ -246,18 +263,49 @@ function buildAttributionMap(
 ): Map<string, LineAttribution> {
   const map = new Map<string, LineAttribution>();
 
-  for (const [_commitSha, note] of notes) {
-    if (!note.attributions) continue;
+  // Build prompt index map on-the-fly: "sessionId:promptId" -> "P1", "P2", etc.
+  const promptIndexMap = new Map<string, string>();
+  let promptCounter = 1;
 
-    for (const attr of note.attributions) {
-      // Add entry for each line in the range
-      for (let line = attr.startLine; line <= attr.endLine; line++) {
-        const key = `${attr.path}:${line}`;
-        map.set(key, {
-          category: attr.category,
-          provider: attr.provider,
-          model: attr.model,
-        });
+  for (const [_commitSha, note] of notes) {
+    // V3 format: uses files with aiRanges
+    if (note.files && note.sessions) {
+      for (const [filePath, fileAttr] of Object.entries(note.files)) {
+        for (const range of fileAttr.aiRanges) {
+          const session = note.sessions[range.sessionId];
+
+          // Assign prompt index when first seen
+          const promptKey = `${range.sessionId}:${range.promptId ?? "null"}`;
+          if (!promptIndexMap.has(promptKey)) {
+            promptIndexMap.set(promptKey, `P${promptCounter++}`);
+          }
+          const promptIndex = promptIndexMap.get(promptKey);
+
+          // Extract prompt content from session if available
+          let promptContent: string | undefined;
+          if (session?.prompts && Array.isArray(session.prompts) && range.promptId != null) {
+            const prompt = session.prompts.find(p => p.id === range.promptId);
+            if (prompt?.content) {
+              promptContent = prompt.content;
+            }
+          } else if (session?.prompts && typeof session.prompts === 'string') {
+            // Legacy format: single prompt string
+            promptContent = session.prompts;
+          }
+
+          // Add entry for each line in the range
+          for (let line = range.startLine; line <= range.endLine; line++) {
+            const key = `${filePath}:${line}`;
+            map.set(key, {
+              category: "ai_generated",
+              provider: session?.agent || "unknown",
+              model: session?.model || null,
+              promptIndex: promptIndex,
+              sessionId: range.sessionId,
+              promptContent: promptContent,
+            });
+          }
+        }
       }
     }
   }

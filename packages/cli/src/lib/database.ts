@@ -1,51 +1,44 @@
 /**
- * SQLite Database Module
+ * SQLite Database Module v3
  *
- * Handles persistent storage of AI edits for attribution matching.
+ * Handles persistent storage of sessions, prompts, and tool calls.
  * Uses Bun's built-in SQLite for high-performance lookups.
  */
 
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AiProvider, MatchType, CapturedLine } from "./types";
+import { createHash } from "node:crypto";
+import type { AiAgent } from "./types";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export interface DbEdit {
-  id: number;
-  timestamp: string;
-  provider: AiProvider;
-  filePath: string;
+export interface DbSession {
+  id: string;
+  agent: AiAgent;
   model: string | null;
-  content: string;
-  contentHash: string;
-  contentHashNormalized: string;
-  editType: string;
-  oldContent: string | null;
-  status: string;
-  matchedCommit: string | null;
-  matchedAt: string | null;
+  conversationId: string | null;
+  createdAt: string;
+  firstCommitSha: string | null;
+  firstCommitAt: string | null;
 }
 
-export interface DbLine {
+export interface DbPrompt {
   id: number;
-  editId: number;
-  content: string;
-  hash: string;
-  hashNormalized: string;
-  lineNumber: number | null;
-  contextBefore: string | null;
-  contextAfter: string | null;
+  sessionId: string;
+  content: string | null;  // null when storePromptContent is false
+  contentHash: string;     // SHA256 hash for deduplication
+  timestamp: string;
 }
 
-export interface LineMatchResult {
-  edit: DbEdit;
-  line: DbLine;
-  matchType: MatchType;
-  confidence: number;
+export interface DbToolCall {
+  id: number;
+  sessionId: string;
+  toolName: string;
+  filePath: string | null;
+  timestamp: string;
 }
 
 // =============================================================================
@@ -53,46 +46,43 @@ export interface LineMatchResult {
 // =============================================================================
 
 const SCHEMA = `
--- Main edits table (one row per AI edit operation)
-CREATE TABLE IF NOT EXISTS edits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    file_path TEXT NOT NULL,
+-- Sessions: One per AI conversation
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    agent TEXT NOT NULL,
     model TEXT,
-    content TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    content_hash_normalized TEXT NOT NULL,
-    edit_type TEXT NOT NULL,
-    old_content TEXT,
-    status TEXT DEFAULT 'pending',
-    matched_commit TEXT,
-    matched_at TEXT,
-    session_id TEXT,
-    tool_use_id TEXT
+    conversation_id TEXT,
+    created_at TEXT NOT NULL,
+    first_commit_sha TEXT,
+    first_commit_at TEXT
 );
 
--- Lines table (one row per line in an edit)
-CREATE TABLE IF NOT EXISTS lines (
+-- Prompts: User messages that triggered AI actions
+CREATE TABLE IF NOT EXISTS prompts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    edit_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    hash TEXT NOT NULL,
-    hash_normalized TEXT NOT NULL,
-    line_number INTEGER,
-    context_before TEXT,
-    context_after TEXT,
-    FOREIGN KEY (edit_id) REFERENCES edits(id) ON DELETE CASCADE
+    session_id TEXT NOT NULL,
+    content TEXT,
+    content_hash TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
--- Indexes for fast lookup
-CREATE INDEX IF NOT EXISTS idx_lines_hash ON lines(hash);
-CREATE INDEX IF NOT EXISTS idx_lines_hash_normalized ON lines(hash_normalized);
-CREATE INDEX IF NOT EXISTS idx_lines_line_number ON lines(line_number);
-CREATE INDEX IF NOT EXISTS idx_edits_status ON edits(status);
-CREATE INDEX IF NOT EXISTS idx_edits_file_path ON edits(file_path);
-CREATE INDEX IF NOT EXISTS idx_edits_content_hash ON edits(content_hash);
-CREATE INDEX IF NOT EXISTS idx_edits_session_id ON edits(session_id);
+-- Tool Calls: What the AI did (minimal for counting per prompt)
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    file_path TEXT,
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent, conversation_id);
+CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
 `;
 
 // =============================================================================
@@ -100,38 +90,29 @@ CREATE INDEX IF NOT EXISTS idx_edits_session_id ON edits(session_id);
 // =============================================================================
 
 let dbInstance: Database | null = null;
-let currentAgentBlameDir: string | null = null;
+let currentDbPath: string | null = null;
 
 /**
- * Set the agentblame directory for database operations.
- * Must be called before using any database functions.
+ * Set the database path directly.
  */
-export function setAgentBlameDir(dir: string): void {
-  if (currentAgentBlameDir !== dir) {
-    // Close existing connection if switching directories
+export function setDatabasePath(dbPath: string): void {
+  if (currentDbPath !== dbPath) {
     if (dbInstance) {
       dbInstance.close();
       dbInstance = null;
     }
-    currentAgentBlameDir = dir;
+    currentDbPath = dbPath;
   }
-}
-
-/**
- * Get the current agentblame directory.
- */
-export function getAgentBlameDir(): string | null {
-  return currentAgentBlameDir;
 }
 
 /**
  * Get the database file path
  */
 export function getDbPath(): string {
-  if (!currentAgentBlameDir) {
-    throw new Error("agentblame directory not set. Call setAgentBlameDir() first.");
+  if (!currentDbPath) {
+    throw new Error("Database path not set. Call setDatabasePath() first.");
   }
-  return path.join(currentAgentBlameDir, "agentblame.db");
+  return currentDbPath;
 }
 
 /**
@@ -145,22 +126,14 @@ export function getDatabase(): Database {
   const dbPath = getDbPath();
   const dbDir = path.dirname(dbPath);
 
-  // Ensure directory exists
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
 
-  // Create database connection
   dbInstance = new Database(dbPath);
-
-  // Enable foreign keys and WAL mode for better performance
   dbInstance.exec("PRAGMA foreign_keys = ON");
   dbInstance.exec("PRAGMA journal_mode = WAL");
-  // Set busy timeout to handle concurrent writes from async hooks
-  // Without this, concurrent capture processes get SQLITE_BUSY and fail silently
   dbInstance.exec("PRAGMA busy_timeout = 5000");
-
-  // Create tables and indexes
   dbInstance.exec(SCHEMA);
 
   return dbInstance;
@@ -177,334 +150,351 @@ export function closeDatabase(): void {
 }
 
 /**
- * Initialize database (creates file and schema if needed)
- * Call this during install to ensure DB is ready
+ * Initialize database
  */
 export function initDatabase(): void {
   const db = getDatabase();
-  // Database is initialized by getDatabase()
-  // Just verify it's working
   db.exec("SELECT 1");
 }
 
+/**
+ * Reset database (drop and recreate tables)
+ */
+export function resetDatabase(): void {
+  const db = getDatabase();
+  db.exec("DROP TABLE IF EXISTS tool_calls");
+  db.exec("DROP TABLE IF EXISTS prompts");
+  db.exec("DROP TABLE IF EXISTS sessions");
+  db.exec(SCHEMA);
+}
+
 // =============================================================================
-// Insert Operations (used by capture.ts)
+// Session ID Generation
 // =============================================================================
 
-export interface InsertEditParams {
+/**
+ * Generate a stable session ID from agent and conversation ID
+ */
+export function generateSessionId(agent: AiAgent, conversationId: string): string {
+  const hash = createHash("sha256");
+  hash.update(`${agent}:${conversationId}`);
+  return hash.digest("hex").substring(0, 16);
+}
+
+// =============================================================================
+// Session Operations
+// =============================================================================
+
+export interface UpsertSessionParams {
+  id: string;
+  agent: AiAgent;
+  model?: string | null;
+  conversationId?: string | null;
+}
+
+/**
+ * Upsert a session
+ */
+export function upsertSession(params: UpsertSessionParams): void {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO sessions (id, agent, model, conversation_id, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      model = COALESCE(excluded.model, sessions.model)
+  `);
+  stmt.run(
+    params.id,
+    params.agent,
+    params.model ?? null,
+    params.conversationId ?? null,
+    new Date().toISOString()
+  );
+}
+
+/**
+ * Get a session by ID
+ */
+export function getSession(sessionId: string): DbSession | null {
+  const db = getDatabase();
+  const stmt = db.prepare("SELECT * FROM sessions WHERE id = ?");
+  const row = stmt.get(sessionId) as any;
+  if (!row) return null;
+  return rowToSession(row);
+}
+
+/**
+ * Update session with first commit info
+ */
+export function updateSessionFirstCommit(sessionId: string, commitSha: string): void {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    UPDATE sessions
+    SET first_commit_sha = COALESCE(first_commit_sha, ?),
+        first_commit_at = COALESCE(first_commit_at, ?)
+    WHERE id = ?
+  `);
+  stmt.run(commitSha, new Date().toISOString(), sessionId);
+}
+
+/**
+ * Get recent sessions
+ */
+export function getRecentSessions(limit = 5): DbSession[] {
+  const db = getDatabase();
+  const stmt = db.prepare(`SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?`);
+  const rows = stmt.all(limit) as any[];
+  return rows.map(rowToSession);
+}
+
+// =============================================================================
+// Prompt Operations
+// =============================================================================
+
+export interface InsertPromptParams {
+  sessionId: string;
+  content: string | null;  // null when not storing content
+  contentHash: string;     // SHA256 hash for deduplication
+  timestamp?: string;
+}
+
+/**
+ * Insert a new prompt
+ */
+export function insertPrompt(params: InsertPromptParams): number {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO prompts (session_id, content, content_hash, timestamp)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    params.sessionId,
+    params.content,
+    params.contentHash,
+    params.timestamp ?? new Date().toISOString()
+  );
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Generate a hash for prompt content (for deduplication)
+ */
+export function hashPromptContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex').substring(0, 16);
+}
+
+/**
+ * Get prompts for a session
+ */
+export function getPromptsForSession(sessionId: string): DbPrompt[] {
+  const db = getDatabase();
+  const stmt = db.prepare("SELECT * FROM prompts WHERE session_id = ? ORDER BY timestamp ASC");
+  const rows = stmt.all(sessionId) as any[];
+  return rows.map(rowToPrompt);
+}
+
+/**
+ * Get the most recent prompt for a session
+ */
+export function getLatestPromptForSession(sessionId: string): DbPrompt | null {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT * FROM prompts WHERE session_id = ? ORDER BY timestamp DESC LIMIT 1
+  `);
+  const row = stmt.get(sessionId) as any;
+  return row ? rowToPrompt(row) : null;
+}
+
+/**
+ * Get all prompts for a session concatenated into one string
+ * Useful for displaying the full conversation context in CLI
+ */
+export function getConcatenatedPromptsForSession(sessionId: string): string | null {
+  const prompts = getPromptsForSession(sessionId);
+  if (prompts.length === 0) return null;
+
+  if (prompts.length === 1) {
+    return prompts[0].content ?? "[content not stored]";
+  }
+
+  // Concatenate with separator showing it's multiple prompts
+  return prompts
+    .map((p, i) => `[${i + 1}] ${p.content ?? '[not stored]'}`)
+    .join(" → ");
+}
+
+/**
+ * Get all prompts for a session with their associated tool call summaries
+ * Tool calls are grouped by the prompt that triggered them (based on timestamps)
+ * Used for git notes and analytics
+ */
+export function getPromptsWithToolCounts(sessionId: string): Array<{
+  id: number;
   timestamp: string;
-  provider: AiProvider;
-  filePath: string;
-  model: string | null;
-  content: string;
-  contentHash: string;
-  contentHashNormalized: string;
-  editType: string;
-  oldContent?: string;
-  lines: CapturedLine[];
-  sessionId?: string;
-  toolUseId?: string;
-}
+  content: string | null;
+  tools?: Record<string, number>;
+  duration?: number;
+}> | null {
+  const prompts = getPromptsForSession(sessionId);
+  if (prompts.length === 0) return null;
 
-/**
- * Insert a new AI edit into the database.
- * Uses an explicit transaction to ensure atomicity - either all data
- * is written (edit + lines) or none. This is especially important
- * when running async hooks where the process could be interrupted.
- */
-export function insertEdit(params: InsertEditParams): number {
-  const db = getDatabase();
+  const toolCalls = getToolCallsForSession(sessionId);
 
-  const editStmt = db.prepare(`
-    INSERT INTO edits (
-      timestamp, provider, file_path, model, content,
-      content_hash, content_hash_normalized, edit_type, old_content,
-      session_id, tool_use_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  const result: Array<{
+    id: number;
+    timestamp: string;
+    content: string | null;
+    tools?: Record<string, number>;
+    duration?: number;
+  }> = [];
 
-  const lineStmt = db.prepare(`
-    INSERT INTO lines (edit_id, content, hash, hash_normalized, line_number, context_before, context_after)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
+  for (let i = 0; i < prompts.length; i++) {
+    const prompt = prompts[i];
+    const promptTime = new Date(prompt.timestamp).getTime();
+    const nextPromptTime = i < prompts.length - 1
+      ? new Date(prompts[i + 1].timestamp).getTime()
+      : Infinity;
 
-  // Wrap in transaction for atomicity
-  db.exec("BEGIN TRANSACTION");
-  try {
-    const result = editStmt.run(
-      params.timestamp,
-      params.provider,
-      params.filePath,
-      params.model,
-      params.content,
-      params.contentHash,
-      params.contentHashNormalized,
-      params.editType,
-      params.oldContent || null,
-      params.sessionId || null,
-      params.toolUseId || null
-    );
+    // Find tool calls between this prompt and the next
+    const toolsForPrompt = toolCalls.filter((tc) => {
+      const tcTime = new Date(tc.timestamp).getTime();
+      return tcTime >= promptTime && tcTime < nextPromptTime;
+    });
 
-    const editId = Number(result.lastInsertRowid);
-
-    // Insert lines with line numbers and context
-    for (const line of params.lines) {
-      lineStmt.run(
-        editId,
-        line.content,
-        line.hash,
-        line.hashNormalized,
-        line.lineNumber || null,
-        line.contextBefore || null,
-        line.contextAfter || null
-      );
+    // Count tools
+    const tools: Record<string, number> = {};
+    for (const tool of toolsForPrompt) {
+      tools[tool.toolName] = (tools[tool.toolName] || 0) + 1;
     }
 
-    db.exec("COMMIT");
-    return editId;
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-}
-
-// =============================================================================
-// Query Operations (used by process.ts for matching)
-// =============================================================================
-
-/**
- * Find a line match by exact hash
- * Returns the edit and line if found, with same-file matches preferred
- */
-export function findByExactHash(
-  hash: string,
-  filePath: string
-): LineMatchResult | null {
-  const db = getDatabase();
-
-  // First try same-file match
-  const sameFileStmt = db.prepare(`
-    SELECT
-      l.id as line_id, l.edit_id, l.content as line_content,
-      l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
-      e.*
-    FROM lines l
-    JOIN edits e ON l.edit_id = e.id
-    WHERE l.hash = ? AND (
-      e.file_path = ? OR
-      e.file_path LIKE ? OR
-      ? LIKE '%' || substr(e.file_path, instr(e.file_path, '/') + 1)
-    )
-    ORDER BY e.timestamp DESC
-    LIMIT 1
-  `);
-
-  const fileName = filePath.split("/").pop() || "";
-  let row = sameFileStmt.get(hash, filePath, `%${fileName}`, filePath) as any;
-
-  // If no same-file match, try any match
-  if (!row) {
-    const anyStmt = db.prepare(`
-      SELECT
-        l.id as line_id, l.edit_id, l.content as line_content,
-        l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
-        e.*
-      FROM lines l
-      JOIN edits e ON l.edit_id = e.id
-      WHERE l.hash = ?
-      ORDER BY e.timestamp DESC
-      LIMIT 1
-    `);
-    row = anyStmt.get(hash) as any;
-  }
-
-  if (!row) return null;
-
-  return {
-    edit: rowToEdit(row),
-    line: {
-      id: row.line_id,
-      editId: row.edit_id,
-      content: row.line_content,
-      hash: row.hash,
-      hashNormalized: row.hash_normalized,
-      lineNumber: row.line_number,
-      contextBefore: row.context_before,
-      contextAfter: row.context_after,
-    },
-    matchType: "exact_hash",
-    confidence: 1.0,
-  };
-}
-
-/**
- * Find a line match by normalized hash
- */
-export function findByNormalizedHash(
-  hashNormalized: string,
-  filePath: string
-): LineMatchResult | null {
-  const db = getDatabase();
-
-  const fileName = filePath.split("/").pop() || "";
-
-  // First try same-file match
-  const sameFileStmt = db.prepare(`
-    SELECT
-      l.id as line_id, l.edit_id, l.content as line_content,
-      l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
-      e.*
-    FROM lines l
-    JOIN edits e ON l.edit_id = e.id
-    WHERE l.hash_normalized = ? AND (
-      e.file_path = ? OR
-      e.file_path LIKE ? OR
-      ? LIKE '%' || substr(e.file_path, instr(e.file_path, '/') + 1)
-    )
-    ORDER BY e.timestamp DESC
-    LIMIT 1
-  `);
-
-  let row = sameFileStmt.get(hashNormalized, filePath, `%${fileName}`, filePath) as any;
-
-  if (!row) {
-    const anyStmt = db.prepare(`
-      SELECT
-        l.id as line_id, l.edit_id, l.content as line_content,
-        l.hash, l.hash_normalized, l.line_number, l.context_before, l.context_after,
-        e.*
-      FROM lines l
-      JOIN edits e ON l.edit_id = e.id
-      WHERE l.hash_normalized = ?
-      ORDER BY e.timestamp DESC
-      LIMIT 1
-    `);
-    row = anyStmt.get(hashNormalized) as any;
-  }
-
-  if (!row) return null;
-
-  return {
-    edit: rowToEdit(row),
-    line: {
-      id: row.line_id,
-      editId: row.edit_id,
-      content: row.line_content,
-      hash: row.hash,
-      hashNormalized: row.hash_normalized,
-      lineNumber: row.line_number,
-      contextBefore: row.context_before,
-      contextAfter: row.context_after,
-    },
-    matchType: "normalized_hash",
-    confidence: 0.95,
-  };
-}
-
-/**
- * Find edits for a specific file (used for substring matching fallback)
- */
-export function findEditsByFile(filePath: string): DbEdit[] {
-  const db = getDatabase();
-  const fileName = filePath.split("/").pop() || "";
-
-  const stmt = db.prepare(`
-    SELECT * FROM edits
-    WHERE file_path = ? OR
-          file_path LIKE ? OR
-          ? LIKE '%' || substr(file_path, instr(file_path, '/') + 1)
-    ORDER BY timestamp DESC
-  `);
-
-  const rows = stmt.all(filePath, `%${fileName}`, filePath) as any[];
-  return rows.map(rowToEdit);
-}
-
-/**
- * Get lines for a specific edit
- */
-export function getEditLines(editId: number): DbLine[] {
-  const db = getDatabase();
-  const stmt = db.prepare(`SELECT * FROM lines WHERE edit_id = ?`);
-  const rows = stmt.all(editId) as any[];
-  return rows.map(row => ({
-    id: row.id,
-    editId: row.edit_id,
-    content: row.content,
-    hash: row.hash,
-    hashNormalized: row.hash_normalized,
-    lineNumber: row.line_number,
-    contextBefore: row.context_before,
-    contextAfter: row.context_after,
-  }));
-}
-
-/**
- * Find a line match using exact matching only:
- * 1. Exact hash match (confidence: 1.0)
- * 2. Normalized hash match (confidence: 0.95) - handles formatter whitespace changes
- *
- * No substring/fuzzy matching - if hash doesn't match, it's human code.
- * Philosophy: "If user modified AI code, it's human code"
- */
-export function findLineMatch(
-  lineContent: string,
-  lineHash: string,
-  lineHashNormalized: string,
-  filePath: string
-): LineMatchResult | null {
-  // Strategy 1: Exact hash - perfect match
-  let match = findByExactHash(lineHash, filePath);
-  if (match) return match;
-
-  // Strategy 2: Normalized hash - handles whitespace changes from formatters
-  match = findByNormalizedHash(lineHashNormalized, filePath);
-  if (match) return match;
-
-  // No match = human code (either written by human or modified from AI)
-  return null;
-}
-
-// =============================================================================
-// Update Operations
-// =============================================================================
-
-/**
- * Mark an edit as matched to a commit
- */
-export function markEditAsMatched(editId: number, commitSha: string): void {
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    UPDATE edits
-    SET status = 'matched', matched_commit = ?, matched_at = ?
-    WHERE id = ?
-  `);
-  stmt.run(commitSha, new Date().toISOString(), editId);
-}
-
-/**
- * Mark multiple edits as matched
- */
-export function markEditsAsMatched(editIds: number[], commitSha: string): void {
-  const db = getDatabase();
-  const timestamp = new Date().toISOString();
-
-  const stmt = db.prepare(`
-    UPDATE edits
-    SET status = 'matched', matched_commit = ?, matched_at = ?
-    WHERE id = ?
-  `);
-
-  db.exec("BEGIN TRANSACTION");
-  try {
-    for (const editId of editIds) {
-      stmt.run(commitSha, timestamp, editId);
+    // Calculate duration until next prompt (or last tool call)
+    let duration: number | undefined;
+    if (i < prompts.length - 1) {
+      duration = Math.round((nextPromptTime - promptTime) / 1000);
+    } else if (toolsForPrompt.length > 0) {
+      // Last prompt: duration until last tool call
+      const lastToolTime = new Date(toolsForPrompt[toolsForPrompt.length - 1].timestamp).getTime();
+      duration = Math.round((lastToolTime - promptTime) / 1000);
     }
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
+
+    result.push({
+      id: prompt.id,
+      timestamp: prompt.timestamp,
+      content: prompt.content,
+      tools: Object.keys(tools).length > 0 ? tools : undefined,
+      duration,
+    });
   }
+
+  return result;
+}
+
+/**
+ * Check if a prompt already exists (by hash)
+ */
+export function promptExists(sessionId: string, contentHash: string): boolean {
+  const db = getDatabase();
+  const stmt = db.prepare(`SELECT 1 FROM prompts WHERE session_id = ? AND content_hash = ? LIMIT 1`);
+  const result = stmt.get(sessionId, contentHash);
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] promptExists query result:`, result, `type:`, typeof result);
+  }
+  return result !== undefined && result !== null;
+}
+
+// =============================================================================
+// Tool Call Operations
+// =============================================================================
+
+export interface InsertToolCallParams {
+  sessionId: string;
+  toolName: string;
+  filePath?: string | null;
+  timestamp?: string;
+}
+
+/**
+ * Insert a new tool call
+ */
+export function insertToolCall(params: InsertToolCallParams): number {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO tool_calls (session_id, tool_name, file_path, timestamp)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    params.sessionId,
+    params.toolName,
+    params.filePath ?? null,
+    params.timestamp ?? new Date().toISOString()
+  );
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Get tool calls for a session
+ */
+export function getToolCallsForSession(sessionId: string): DbToolCall[] {
+  const db = getDatabase();
+  const stmt = db.prepare("SELECT * FROM tool_calls WHERE session_id = ? ORDER BY timestamp ASC");
+  const rows = stmt.all(sessionId) as any[];
+  return rows.map(rowToToolCall);
+}
+
+/**
+ * Get unique tool names used in a session
+ */
+export function getToolNamesForSession(sessionId: string): string[] {
+  const db = getDatabase();
+  const stmt = db.prepare(`SELECT DISTINCT tool_name FROM tool_calls WHERE session_id = ? ORDER BY tool_name`);
+  const rows = stmt.all(sessionId) as any[];
+  return rows.map((r) => r.tool_name);
+}
+
+/**
+ * Get tool call counts for a session
+ * Returns a map of tool_name -> count
+ */
+export function getToolCountsForSession(sessionId: string): Record<string, number> {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT tool_name, COUNT(*) as count
+    FROM tool_calls
+    WHERE session_id = ?
+    GROUP BY tool_name
+  `);
+  const rows = stmt.all(sessionId) as any[];
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    counts[row.tool_name] = row.count;
+  }
+  return counts;
+}
+
+/**
+ * Get session duration in seconds (last tool call - session start)
+ * Returns null if no tool calls
+ */
+export function getSessionDuration(sessionId: string): number | null {
+  const db = getDatabase();
+
+  // Get session start time
+  const session = db.prepare("SELECT created_at FROM sessions WHERE id = ?").get(sessionId) as any;
+  if (!session) return null;
+
+  // Get last tool call time
+  const lastToolCall = db.prepare(`
+    SELECT MAX(timestamp) as last_ts
+    FROM tool_calls
+    WHERE session_id = ?
+  `).get(sessionId) as any;
+
+  if (!lastToolCall?.last_ts) return null;
+
+  const startTime = new Date(session.created_at).getTime();
+  const endTime = new Date(lastToolCall.last_ts).getTime();
+
+  return Math.round((endTime - startTime) / 1000);
 }
 
 // =============================================================================
@@ -512,87 +502,65 @@ export function markEditsAsMatched(editIds: number[], commitSha: string): void {
 // =============================================================================
 
 /**
- * Clean up old entries
- * - Removes matched entries older than maxAgeDays
- * - Removes unmatched entries older than expireDays
+ * Clean up old entries (sessions without commits older than maxAgeDays)
  */
-export function cleanupOldEntries(
-  maxAgeDays = 7,
-  expireDays = 30
-): { removed: number; kept: number } {
+export function cleanupOldEntries(maxAgeDays = 30): { removed: number; kept: number } {
   const db = getDatabase();
+  const beforeCount = (db.prepare("SELECT COUNT(*) as count FROM sessions").get() as any).count;
 
-  // Count before
-  const beforeCount = (db.prepare("SELECT COUNT(*) as count FROM edits").get() as any).count;
-
-  // Delete old matched entries
   db.prepare(`
-    DELETE FROM edits
-    WHERE status = 'matched'
-    AND datetime(matched_at) < datetime('now', '-' || ? || ' days')
+    DELETE FROM sessions
+    WHERE first_commit_sha IS NULL
+    AND datetime(created_at) < datetime('now', '-' || ? || ' days')
   `).run(maxAgeDays);
 
-  // Delete old unmatched entries
-  db.prepare(`
-    DELETE FROM edits
-    WHERE (status IS NULL OR status = 'pending')
-    AND datetime(timestamp) < datetime('now', '-' || ? || ' days')
-  `).run(expireDays);
-
-  // Count after
-  const afterCount = (db.prepare("SELECT COUNT(*) as count FROM edits").get() as any).count;
-
-  return {
-    removed: beforeCount - afterCount,
-    kept: afterCount,
-  };
+  const afterCount = (db.prepare("SELECT COUNT(*) as count FROM sessions").get() as any).count;
+  return { removed: beforeCount - afterCount, kept: afterCount };
 }
 
 /**
- * Get count of pending edits
+ * Get stats for status display
  */
-export function getPendingEditCount(): number {
+export function getStats(): { sessions: number; prompts: number; toolCalls: number } {
   const db = getDatabase();
-  const result = db.prepare(`
-    SELECT COUNT(*) as count FROM edits
-    WHERE status IS NULL OR status = 'pending'
-  `).get() as any;
-  return result.count;
-}
-
-/**
- * Get recent pending edits for status display
- */
-export function getRecentPendingEdits(limit = 5): DbEdit[] {
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT * FROM edits
-    WHERE status IS NULL OR status = 'pending'
-    ORDER BY timestamp DESC
-    LIMIT ?
-  `);
-  const rows = stmt.all(limit) as any[];
-  return rows.map(rowToEdit);
+  const sessions = (db.prepare("SELECT COUNT(*) as count FROM sessions").get() as any).count;
+  const prompts = (db.prepare("SELECT COUNT(*) as count FROM prompts").get() as any).count;
+  const toolCalls = (db.prepare("SELECT COUNT(*) as count FROM tool_calls").get() as any).count;
+  return { sessions, prompts, toolCalls };
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-function rowToEdit(row: any): DbEdit {
+function rowToSession(row: any): DbSession {
   return {
     id: row.id,
-    timestamp: row.timestamp,
-    provider: row.provider as AiProvider,
-    filePath: row.file_path,
+    agent: row.agent as AiAgent,
     model: row.model,
+    conversationId: row.conversation_id,
+    createdAt: row.created_at,
+    firstCommitSha: row.first_commit_sha,
+    firstCommitAt: row.first_commit_at,
+  };
+}
+
+function rowToPrompt(row: any): DbPrompt {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
     content: row.content,
     contentHash: row.content_hash,
-    contentHashNormalized: row.content_hash_normalized,
-    editType: row.edit_type,
-    oldContent: row.old_content,
-    status: row.status,
-    matchedCommit: row.matched_commit,
-    matchedAt: row.matched_at,
+    timestamp: row.timestamp,
+  };
+}
+
+function rowToToolCall(row: any): DbToolCall {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    toolName: row.tool_name,
+    filePath: row.file_path,
+    timestamp: row.timestamp,
   };
 }

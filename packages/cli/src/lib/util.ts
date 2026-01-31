@@ -1,5 +1,4 @@
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
@@ -35,27 +34,22 @@ export function computeNormalizedHash(content: string): string {
 }
 
 /**
- * Find the .agentblame directory by walking up from a file path.
- * Returns null if not found (file is not in an initialized repo).
+ * Normalize model name by stripping date/version suffixes.
+ * Uses generic patterns - no model-specific logic, so new models work automatically.
+ *
+ * Strips:
+ * - Trailing 3+ digit version numbers: -001, -0613, -20241022
+ * - Trailing YYYY-MM-DD dates: -2024-04-09
+ * - Mid-string date codes before suffixes: -1106-preview → -preview
  */
-export function findAgentBlameDir(filePath: string): string | null {
-  let dir = path.dirname(filePath);
+export function normalizeModelName(model: string | null): string | null {
+  if (!model) return null;
 
-  while (dir !== path.dirname(dir)) {
-    const agentblameDir = path.join(dir, ".agentblame");
-    if (fs.existsSync(agentblameDir)) {
-      return agentblameDir;
-    }
-    dir = path.dirname(dir);
-  }
-
-  return null;
-}
-
-/**
- * Get the agentblame directory for a specific repo root.
- * Used during init when we know the repo root.
- */
-export function getAgentBlameDirForRepo(repoRoot: string): string {
-  return path.join(repoRoot, ".agentblame");
+  return model
+    // -YYYY-MM-DD at end (e.g., -2024-04-09)
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "")
+    // -NNNN-suffix where NNNN is 4 digits (e.g., -1106-preview → -preview)
+    .replace(/-\d{4}(-[a-z]+)$/i, "$1")
+    // -NNN or -NNNN or -NNNNNNNN at end (3-8 digits)
+    .replace(/-\d{3,8}$/, "");
 }
