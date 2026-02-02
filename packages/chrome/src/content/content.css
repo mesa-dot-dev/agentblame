@@ -5,35 +5,24 @@
   --ab-ai-color: #b86540;      /* Mesa Orange */
 }
 
-/* Attribution gutter - box-shadow on the new line number cell */
-/* Placed on left edge of the second line number column */
+/* Attribution gutter - orange left bar on AI-generated lines */
 /* Only AI-generated lines are marked - human lines have no marker (cleaner UI) */
 
-/* AI-generated lines marker - position relative for badge */
+/* AI-generated lines marker - orange left border */
 .ab-gutter-ai {
   position: relative;
-}
-
-/* New GitHub UI (React) - ensure relative positioning */
-td.diff-line-number.ab-gutter-ai,
-[data-grid-cell-id].ab-gutter-ai {
-  position: relative !important;
-  overflow: visible !important;
-}
-
-/* Prompt badge (P1, P2) - positioned to the left, doesn't affect line number position */
-.ab-prompt-badge {
-  position: absolute !important;
-  left: auto !important;
-  font-size: inherit;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--ab-ai-color);
-  white-space: nowrap;
+  box-shadow: inset 3px 0 0 0 var(--ab-ai-color) !important;
   cursor: pointer;
 }
 
-/* Prompt tooltip - appears on hover over P1/P2 badges */
+/* New GitHub UI (React) - ensure styling works */
+td.diff-line-number.ab-gutter-ai,
+[data-grid-cell-id].ab-gutter-ai {
+  position: relative !important;
+  box-shadow: inset 3px 0 0 0 var(--ab-ai-color) !important;
+}
+
+/* Prompt tooltip - appears on hover over orange gutter bar */
 .ab-prompt-tooltip {
   position: absolute;
   z-index: 10000;
@@ -60,15 +49,6 @@ td.diff-line-number.ab-gutter-ai,
   border-bottom: 1px solid var(--borderColor-muted, var(--color-border-muted, #d8dee4));
 }
 
-.ab-tooltip-index {
-  font-weight: 700;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  color: var(--ab-ai-color);
-  background: rgba(184, 101, 64, 0.1);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
 .ab-tooltip-agent {
   font-weight: 600;
   color: var(--fgColor-default, var(--color-fg-default, #24292f));
@@ -80,17 +60,6 @@ td.diff-line-number.ab-gutter-ai,
   word-break: break-word;
   max-height: 200px;
   overflow-y: auto;
-}
-
-/* New GitHub UI - move P1 closer */
-.diff-line-number .ab-prompt-badge,
-[data-grid-cell-id] .ab-prompt-badge {
-  right: calc(100% - 8px) !important;
-}
-
-/* Classic GitHub UI - move P1 even closer */
-.blob-num .ab-prompt-badge {
-  right: calc(100% - 14px) !important;
 }
 
 /* PR summary banner - compact design with coral orange accent */
@@ -498,10 +467,6 @@ td.diff-line-number.ab-gutter-ai,
 
   .ab-tooltip-header {
     border-bottom-color: var(--borderColor-muted, #21262d);
-  }
-
-  .ab-tooltip-index {
-    background: rgba(184, 101, 64, 0.2);
   }
 
   .ab-tooltip-agent {

@@ -33,7 +33,16 @@ import { updateAnalytics, computeCommitStats } from "./lib/analytics";
 import {
   getFilesWithDeltas,
   clearDeltas,
+  getLastDeltaForFile,
+  computeDiff,
+  appendDelta,
+  createHumanDelta,
 } from "./lib/delta";
+import {
+  loadSnapshot,
+  storeSnapshot,
+  getFileAtCommit,
+} from "./lib/storage";
 import {
   computeFileAttributions,
 } from "./lib/attribution";
@@ -54,6 +63,70 @@ const c = {
   orange: "\x1b[38;2;184;101;64m",
   blue: "\x1b[34m",
 };
+
+/**
+ * Detect and record human edits made after the last AI edit but before commit.
+ * This ensures human edits that happen between AI edits and commit are captured.
+ */
+async function detectHumanEditsAtCommitTime(
+  repoRoot: string,
+  parentSha: string,
+  commitSha: string,
+  filePath: string
+): Promise<void> {
+  // Get the last delta for this file (AI or human)
+  const lastDelta = getLastDeltaForFile(repoRoot, parentSha, filePath);
+
+  if (!lastDelta?.afterBlob) {
+    // No delta exists for this file, nothing to compare against
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] detectHumanEditsAtCommitTime: no delta for ${filePath}`);
+    }
+    return;
+  }
+
+  // Get the content from the last delta's afterBlob (baseline)
+  let baselineContent: string;
+  try {
+    baselineContent = await loadSnapshot(repoRoot, lastDelta.afterBlob);
+  } catch (err) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] detectHumanEditsAtCommitTime: failed to load afterBlob for ${filePath}: ${err}`);
+    }
+    return;
+  }
+
+  // Get the committed file content
+  const committedContent = await getFileAtCommit(repoRoot, commitSha, filePath);
+  if (committedContent === null) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] detectHumanEditsAtCommitTime: file not in commit ${filePath}`);
+    }
+    return;
+  }
+
+  // Compute diff between baseline and committed content
+  const hunks = computeDiff(baselineContent, committedContent);
+
+  if (hunks.length === 0) {
+    // No changes between last delta and commit - nothing to record
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] detectHumanEditsAtCommitTime: no diff for ${filePath}`);
+    }
+    return;
+  }
+
+  // Human edits detected! Record them as a human delta
+  const afterBlob = await storeSnapshot(repoRoot, committedContent);
+  const humanDelta = createHumanDelta(filePath, hunks, afterBlob);
+  appendDelta(repoRoot, parentSha, humanDelta);
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(
+      `[agentblame] detectHumanEditsAtCommitTime: recorded human delta for ${filePath} (${hunks.length} hunks)`
+    );
+  }
+}
 
 /**
  * Process a commit using delta-based attribution
@@ -93,6 +166,13 @@ export async function processCommit(
 
   // Check if we have any deltas to process
   const filesWithDeltas = getFilesWithDeltas(repoRoot, parentSha);
+
+  // Detect human edits made after the last AI edit but before commit.
+  // This ensures that if a user makes manual edits after AI edits and then commits,
+  // those human edits are captured as deltas before we compute attributions.
+  for (const filePath of filesWithDeltas) {
+    await detectHumanEditsAtCommitTime(repoRoot, parentSha, commitSha, filePath);
+  }
 
   // Track attributions per file (only for added lines)
   const fileAttributions = new Map<

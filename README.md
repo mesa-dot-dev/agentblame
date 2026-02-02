@@ -27,7 +27,7 @@ Agent Blame tracks AI-generated code in your Git history:
 
 - **CLI** - See which lines were written by AI in any file
 - **Chrome Extension** - View AI markers directly on GitHub PRs
-- **Automatic** - Works silently with Cursor and Claude Code
+- **Automatic** - Works silently with Cursor, Claude Code, and OpenCode
 - **Squash-Safe** - Attribution survives squash and rebase merges
 
 ---
@@ -36,7 +36,7 @@ Agent Blame tracks AI-generated code in your Git history:
 
 - [Bun](https://bun.sh/) runtime (required for hooks)
 - Git 2.25+
-- Cursor or Claude Code
+- Cursor, Claude Code, or OpenCode
 
 ```bash
 # Install Bun if you haven't already
@@ -60,11 +60,11 @@ agentblame init
 ```
 
 This sets up everything automatically for your repository:
-- Editor hooks for Cursor and Claude Code
+- Editor hooks for Cursor, Claude Code, and OpenCode
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-> **Important:** Restart Cursor/Claude Code after installation.
+> **Important:** Restart your editor after installation.
 
 <br>
 
@@ -159,14 +159,15 @@ agentblame blame src/auth.ts
 
 | Command | Description |
 |---------|-------------|
-| `agentblame init` | Set up hooks and GitHub Actions workflow (current repo) |
-| `agentblame clean` | Remove hooks and workflow from current repo |
+| `agentblame init` | Set up hooks and GitHub Actions workflow |
+| `agentblame clean` | Remove hooks and local database |
 | `agentblame blame <file>` | Show AI attribution for a file |
 | `agentblame blame --summary` | Show summary only |
 | `agentblame blame --json` | Output as JSON |
-| `agentblame status` | Show pending AI edits |
-| `agentblame sync` | Manually transfer notes after squash/rebase |
-| `agentblame prune` | Remove old database entries |
+| `agentblame blame --verbose` | Show full prompts (not truncated) |
+| `agentblame sync` | Transfer notes after squash/rebase |
+| `agentblame config` | Show/set configuration |
+| `agentblame debug` | Show detailed debug info |
 
 ---
 
@@ -198,7 +199,7 @@ agentblame blame src/auth.ts
 
 | Problem | Solution |
 |---------|----------|
-| Hooks not capturing | Restart Cursor/Claude Code |
+| Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
 | Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
 | Bun not found | Install Bun: `curl -fsSL https://bun.sh/install \| bash` |
@@ -260,13 +261,12 @@ cd packages/cli && npm publish --otp=YOUR_CODE
 ### Roadmap
 Contributions welcome! Here's what we'd love help with:
 - Support for other coding agents
-  - Opencode
   - VSCode / Copilot
+  - Windsurf
   - Antigravity
   - and more!
 - Multi-browser extension support
 - Support for JJ VCS
-- Capture and store prompts / chain-of-thought for each edit
 ---
 
 ## License

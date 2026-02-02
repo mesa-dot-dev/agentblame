@@ -437,7 +437,7 @@ export function hasMarker(element: HTMLElement): boolean {
 
 /**
  * Inject AI attribution marker into a line
- * Shows prompt index (P1, P2) before line number with hover tooltip
+ * Shows orange gutter bar with hover tooltip for prompt details
  */
 export function injectMarker(
   element: HTMLElement,
@@ -451,23 +451,13 @@ export function injectMarker(
   if (lineNumCell) {
     lineNumCell.classList.add("ab-gutter-ai");
 
-    // Add prompt index badge before the line number
-    if (attribution.promptIndex) {
-      const promptBadge = document.createElement("span");
-      promptBadge.className = "ab-prompt-badge";
-      promptBadge.textContent = attribution.promptIndex;
-
-      // Store tooltip data as data attributes
-      promptBadge.dataset.promptIndex = attribution.promptIndex;
-      promptBadge.dataset.agent = attribution.provider;
-      if (attribution.model) {
-        promptBadge.dataset.model = attribution.model;
-      }
-      if (attribution.promptContent) {
-        promptBadge.dataset.content = attribution.promptContent;
-      }
-
-      lineNumCell.insertBefore(promptBadge, lineNumCell.firstChild);
+    // Store tooltip data as data attributes on the gutter cell
+    lineNumCell.dataset.agent = attribution.provider;
+    if (attribution.model) {
+      lineNumCell.dataset.model = attribution.model;
+    }
+    if (attribution.promptContent) {
+      lineNumCell.dataset.content = attribution.promptContent;
     }
   }
 }
@@ -479,17 +469,17 @@ export function removeAllMarkers(): void {
   // Hide tooltip first
   cleanupTooltip();
 
-  // Remove prompt badges first (they're inside gutter cells)
-  const promptBadges = document.querySelectorAll(".ab-prompt-badge");
-  promptBadges.forEach((b) => {
-    b.remove();
-  });
-
-  // Remove AI gutter classes and titles from line number cells
+  // Remove AI gutter classes and data attributes from line number cells
   const aiGutters = document.querySelectorAll(".ab-gutter-ai");
   aiGutters.forEach((el) => {
     el.classList.remove("ab-gutter-ai");
     el.removeAttribute("title");
+    // Clean up data attributes
+    if (el instanceof HTMLElement) {
+      delete el.dataset.agent;
+      delete el.dataset.model;
+      delete el.dataset.content;
+    }
   });
 
   const summaries = document.querySelectorAll(".ab-pr-summary");
@@ -828,11 +818,11 @@ export function initTooltip(): void {
 }
 
 /**
- * Handle showing tooltip on badge hover
+ * Handle showing tooltip on gutter hover
  */
 function handleTooltipShow(e: Event): void {
   const target = e.target as HTMLElement;
-  if (!target.classList?.contains("ab-prompt-badge")) {
+  if (!target.classList?.contains("ab-gutter-ai")) {
     return;
   }
 
@@ -842,8 +832,8 @@ function handleTooltipShow(e: Event): void {
     tooltipTimeout = null;
   }
 
-  const { promptIndex, agent, model, content } = target.dataset;
-  if (!tooltipElement || !promptIndex) {
+  const { agent, model, content } = target.dataset;
+  if (!tooltipElement) {
     return;
   }
 
@@ -854,17 +844,16 @@ function handleTooltipShow(e: Event): void {
 
   tooltipElement.innerHTML = `
     <div class="ab-tooltip-header">
-      <span class="ab-tooltip-index">${escapeHtml(promptIndex)}</span>
       <span class="ab-tooltip-agent">${escapeHtml(agentDisplay)}${escapeHtml(modelDisplay)}</span>
     </div>
     <div class="ab-tooltip-content">${escapeHtml(contentDisplay)}</div>
   `;
 
-  // Position tooltip near the badge
+  // Position tooltip near the gutter
   const rect = target.getBoundingClientRect();
   const tooltipWidth = 320;
 
-  // Position to the right of the badge, or left if not enough space
+  // Position to the right of the gutter cell
   let left = rect.right + 8;
   if (left + tooltipWidth > window.innerWidth - 20) {
     left = rect.left - tooltipWidth - 8;
@@ -875,7 +864,7 @@ function handleTooltipShow(e: Event): void {
     left = 20;
   }
 
-  // Vertical centering with the badge
+  // Vertical centering with the gutter
   let top = rect.top + window.scrollY - 10;
 
   // Ensure it doesn't go off screen on top
@@ -889,11 +878,11 @@ function handleTooltipShow(e: Event): void {
 }
 
 /**
- * Handle hiding tooltip when leaving badge
+ * Handle hiding tooltip when leaving gutter
  */
 function handleTooltipHide(e: Event): void {
   const target = e.target as HTMLElement;
-  if (!target.classList?.contains("ab-prompt-badge")) {
+  if (!target.classList?.contains("ab-gutter-ai")) {
     return;
   }
 
