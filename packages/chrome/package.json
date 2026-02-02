@@ -1,12 +1,13 @@
 {
   "name": "@agentblame/chrome",
-  "version": "0.2.9",
+  "version": "3.0.0",
   "description": "Agent Blame Chrome Extension - See AI attribution on GitHub PRs",
   "private": true,
   "scripts": {
     "build": "bun run build-chrome.ts",
     "clean": "rm -rf dist",
-    "zip": "cd dist && zip -r ../agentblame-chrome.zip ."
+    "zip": "cd dist && zip -r ../agentblame-chrome.zip .",
+    "load-test-analytics": "./scripts/load-test-analytics.sh"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

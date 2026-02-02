@@ -1,66 +1,71 @@
 #!/usr/bin/env bun
 /**
- * Agent Blame Hook Capture
+ * Agent Blame Hook Capture v3
  *
- * Captures AI-generated code from Cursor and Claude Code hooks.
- * Performs line-level hashing for precise attribution matching.
+ * Captures AI-generated code from Cursor, Claude Code, and OpenCode hooks.
+ * Uses delta-based tracking for accurate line attribution.
  *
  * Usage:
  *   echo '{"payload": ...}' | bun run capture.ts --provider cursor --event afterFileEdit
  *   echo '{"payload": ...}' | bun run capture.ts --provider claude
- *
- * Note: We only track afterFileEdit (Composer/Agent mode).
- * Tab completions (afterTabFileEdit) are NOT tracked because they fire
- * as fragments that cannot be reliably matched to commits.
+ *   echo '{"payload": ...}' | bun run capture.ts --provider opencode
  */
 
-import * as crypto from "node:crypto";
-import { diffLines } from "diff";
-import { insertEdit, setAgentBlameDir } from "./lib/database";
-import { findAgentBlameDir } from "./lib/util";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import {
+  setDatabasePath,
+  generateSessionId,
+  upsertSession,
+  insertPrompt,
+  insertToolCall,
+  promptExists,
+  getLatestPromptForSession,
+  hashPromptContent,
+} from "./lib/database";
+import { getConfig } from "./lib/config";
+import {
+  storeSnapshot,
+  getGitHead,
+  readFileContent,
+  getDatabasePath,
+  ensureAgentBlameDirs,
+  loadSnapshot,
+  cleanupProcessedWorkingDirs,
+} from "./lib/storage";
+import {
+  captureBeforePromptCheckpoint,
+  captureFileCheckpoint,
+  getBeforeBlob,
+  hasFileChanged,
+  getCheckpointContent,
+  loadCheckpoint,
+} from "./lib/checkpoint";
+import { normalizeModelName } from "./lib/util";
+import {
+  computeDiff,
+  appendDelta,
+  createAIDelta,
+  createHumanDelta,
+  getLastAIDeltaForFile,
+  getLastDeltaForFile,
+} from "./lib/delta";
+import type { AiAgent } from "./lib/types";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-interface CapturedLine {
-  content: string;
-  hash: string;
-  hashNormalized: string;
-  lineNumber?: number;
-  contextBefore?: string;
-  contextAfter?: string;
-}
-
-interface CapturedEdit {
-  timestamp: string;
-  provider: "cursor" | "claudeCode" | "opencode";
-  filePath: string;
-  model: string | null;
-  lines: CapturedLine[];
-  content: string;
-  contentHash: string;
-  contentHashNormalized: string;
-  editType: "addition" | "modification" | "replacement";
-  oldContent?: string;
-  sessionId?: string;
-  toolUseId?: string;
-}
-
 interface CursorPayload {
-  file_path: string;
+  file_path?: string;
   edits?: Array<{ old_string: string; new_string: string }>;
   model?: string;
   conversation_id?: string;
   generation_id?: string;
-}
-
-interface StructuredPatchHunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  lines: string[];
+  prompt?: string;
+  attachments?: Array<{ type: string; file_path: string }>;
+  hook_event_name?: string;
+  workspace_roots?: string[];
 }
 
 interface ClaudePayload {
@@ -70,20 +75,24 @@ interface ClaudePayload {
     old_string?: string;
     new_string?: string;
     content?: string;
+    pattern?: string;
+    path?: string;
+    command?: string;
+    query?: string;
+    url?: string;
+    description?: string;
+    subagent_type?: string;
   };
   tool_response?: {
     filePath?: string;
     originalFile?: string;
-    structuredPatch?: StructuredPatchHunk[];
     userModified?: boolean;
   };
   session_id?: string;
   tool_use_id?: string;
   transcript_path?: string;
   file_path?: string;
-  old_string?: string;
-  new_string?: string;
-  content?: string;
+  hook_event_name?: string;
 }
 
 interface OpenCodePayload {
@@ -91,197 +100,69 @@ interface OpenCodePayload {
   sessionID?: string;
   callID?: string;
   filePath?: string;
-  // Edit tool fields
   oldString?: string;
   newString?: string;
-  before?: string;  // Full file content before edit
-  after?: string;   // Full file content after edit
-  diff?: string;    // Unified diff
-  // Write tool fields
+  before?: string;
+  after?: string;
+  diff?: string;
   content?: string;
-  // Model info (extracted by plugin from config)
   model?: string;
+  prompt?: string;
+  hook_event?: "before" | "after";
 }
 
 // =============================================================================
 // Utilities
 // =============================================================================
 
-function computeHash(content: string): string {
-  return `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
-}
+async function findRepoRoot(filePath: string): Promise<string | null> {
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.resolve(process.cwd(), filePath);
 
-function computeNormalizedHash(content: string): string {
-  const normalized = content.replace(/\s+/g, "");
-  return `sha256:${crypto.createHash("sha256").update(normalized).digest("hex")}`;
-}
-
-/**
- * Extract only the added lines from a diff between old and new text.
- */
-function extractAddedContent(oldText: string, newText: string): string {
-  // Normalize trailing newlines to avoid false positives.
-  // diffLines treats "line" and "line\n" as different, so when a line
-  // goes from being last (no \n) to having content after it (has \n),
-  // it gets marked as "added" even though the content is identical.
-  const normalize = (text: string): string => {
-    if (!text) return "";
-    return text.endsWith("\n") ? text : text + "\n";
-  };
-
-  const parts = diffLines(normalize(oldText), normalize(newText));
-  const addedParts: string[] = [];
-
-  for (const part of parts) {
-    if (part.added) {
-      addedParts.push(part.value ?? "");
-    }
-  }
-
-  return addedParts.join("");
-}
-
-/**
- * Determine the edit type based on old and new content
- */
-function determineEditType(
-  oldContent: string | undefined,
-  newContent: string
-): "addition" | "modification" | "replacement" {
-  if (!oldContent || oldContent.trim() === "") {
-    return "addition";
-  }
-  if (newContent.includes(oldContent)) {
-    return "modification"; // New content contains old content (added to it)
-  }
-  return "replacement"; // Old content was replaced
-}
-
-/**
- * Hash each line individually for precise matching
- */
-function hashLines(content: string): CapturedLine[] {
-  const lines = content.split("\n");
-  const result: CapturedLine[] = [];
-
-  for (const line of lines) {
-    // Skip empty lines for hashing purposes but keep them for content
-    if (!line.trim()) continue;
-
-    result.push({
-      content: line,
-      hash: computeHash(line),
-      hashNormalized: computeNormalizedHash(line),
-    });
-  }
-
-  return result;
-}
-
-/**
- * Hash lines with line numbers and context (for Claude structuredPatch)
- */
-function hashLinesWithNumbers(
-  lines: Array<{ content: string; lineNumber: number }>,
-  allFileLines: string[]
-): CapturedLine[] {
-  const result: CapturedLine[] = [];
-
-  for (const { content, lineNumber } of lines) {
-    // Skip empty lines
-    if (!content.trim()) continue;
-
-    // Get context (3 lines before and after)
-    const contextBefore = allFileLines
-      .slice(Math.max(0, lineNumber - 4), lineNumber - 1)
-      .join("\n");
-    const contextAfter = allFileLines
-      .slice(lineNumber, Math.min(allFileLines.length, lineNumber + 3))
-      .join("\n");
-
-    result.push({
-      content,
-      hash: computeHash(content),
-      hashNormalized: computeNormalizedHash(content),
-      lineNumber,
-      contextBefore: contextBefore || undefined,
-      contextAfter: contextAfter || undefined,
-    });
-  }
-
-  return result;
-}
-
-/**
- * Parse Claude Code's structuredPatch to extract added lines with line numbers
- */
-function parseStructuredPatch(
-  hunks: StructuredPatchHunk[],
-  originalFileLines: string[]
-): Array<{ content: string; lineNumber: number }> {
-  const addedLines: Array<{ content: string; lineNumber: number }> = [];
-
-  for (const hunk of hunks) {
-    let newLineNumber = hunk.newStart;
-
-    for (const line of hunk.lines) {
-      if (line.startsWith("+")) {
-        // Added line - strip the + prefix
-        addedLines.push({
-          content: line.slice(1),
-          lineNumber: newLineNumber,
-        });
-        newLineNumber++;
-      } else if (line.startsWith("-")) {
-        // Deleted line - don't increment new line number
-        continue;
-      } else {
-        // Context line (starts with space) - increment line number
-        newLineNumber++;
-      }
-    }
-  }
-
-  return addedLines;
-}
-
-/**
- * Read a file and return its lines (for Cursor line number derivation)
- */
-async function readFileLines(filePath: string): Promise<string[] | null> {
+  let dir: string;
   try {
-    const fs = await import("node:fs/promises");
-    const content = await fs.readFile(filePath, "utf8");
-    return content.split("\n");
+    const stat = fs.statSync(absolutePath);
+    dir = stat.isDirectory() ? absolutePath : path.dirname(absolutePath);
   } catch {
-    return null;
+    dir = path.dirname(absolutePath);
   }
+
+  while (dir !== "/" && dir !== ".") {
+    const gitDir = path.join(dir, ".git");
+    if (fs.existsSync(gitDir)) {
+      return dir;
+    }
+    dir = path.dirname(dir);
+  }
+
+  return null;
 }
 
-/**
- * Extract model name from Claude Code transcript file.
- * The transcript is a JSONL file where assistant messages contain the model field.
- * We read from the end to find the most recent model used.
- */
-async function extractModelFromTranscript(transcriptPath: string): Promise<string | null> {
+function makeRelative(repoRoot: string, filePath: string): string {
+  if (filePath.startsWith(repoRoot)) {
+    return filePath.slice(repoRoot.length + 1);
+  }
+  return filePath;
+}
+
+async function extractModelFromTranscript(
+  transcriptPath: string
+): Promise<string | null> {
   try {
-    const fs = await import("node:fs/promises");
-    const content = await fs.readFile(transcriptPath, "utf8");
+    const content = fs.readFileSync(transcriptPath, "utf8");
     const lines = content.split("\n");
 
-    // Read from the end to find the most recent assistant message with model info
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
 
       try {
         const entry = JSON.parse(line);
-        // Assistant messages have message.model field
         if (entry.message?.model) {
           return entry.message.model;
         }
       } catch {
-        // Skip malformed lines
         continue;
       }
     }
@@ -292,69 +173,291 @@ async function extractModelFromTranscript(transcriptPath: string): Promise<strin
   }
 }
 
-/**
- * Find where old_string exists in file and return line numbers for new_string
- * Returns null if old_string not found (new file or complex edit)
- */
-function findEditLocation(
-  fileLines: string[],
-  oldString: string,
-  newString: string
-): Array<{ content: string; lineNumber: number }> | null {
-  if (!oldString) {
-    // New content with no old string - can't determine line numbers without more context
-    return null;
-  }
+async function extractPromptFromTranscript(
+  transcriptPath: string
+): Promise<string | null> {
+  try {
+    const content = fs.readFileSync(transcriptPath, "utf8");
+    const lines = content.split("\n").reverse();
 
-  const fileContent = fileLines.join("\n");
-  const oldIndex = fileContent.indexOf(oldString);
+    for (const line of lines) {
+      if (!line.trim()) continue;
 
-  if (oldIndex === -1) {
-    return null;
-  }
+      try {
+        const entry = JSON.parse(line);
 
-  // Count lines before the match to get line number
-  const linesBefore = fileContent.slice(0, oldIndex).split("\n").length;
-  const startLine = linesBefore;
+        if (entry.type === "human" || entry.message?.role === "user") {
+          const msg = entry.message?.content;
 
-  // Calculate what the new file will look like after the edit
-  const newFileContent = fileContent.replace(oldString, newString);
-  const newFileLines = newFileContent.split("\n");
-
-  // Find the added lines by comparing old and new
-  const addedContent = extractAddedContent(oldString, newString);
-  if (!addedContent.trim()) {
-    return null;
-  }
-
-  const addedLines = addedContent.split("\n").filter(l => l.trim());
-  const result: Array<{ content: string; lineNumber: number }> = [];
-
-  // Find each added line in the new content
-  let searchStart = startLine - 1;
-  for (const addedLine of addedLines) {
-    if (!addedLine.trim()) continue;
-
-    for (let i = searchStart; i < newFileLines.length; i++) {
-      if (newFileLines[i] === addedLine || newFileLines[i].trim() === addedLine.trim()) {
-        result.push({
-          content: addedLine,
-          lineNumber: i + 1, // 1-indexed
-        });
-        searchStart = i + 1;
-        break;
+          if (Array.isArray(msg)) {
+            const textPart = msg.find(
+              (m: any) => m.type === "text" || typeof m === "string"
+            );
+            if (textPart) {
+              return typeof textPart === "string" ? textPart : textPart.text;
+            }
+          } else if (typeof msg === "string") {
+            return msg;
+          } else if (entry.content) {
+            return entry.content;
+          }
+        }
+      } catch {
+        continue;
       }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
+// Capture Context
+// =============================================================================
+
+interface CaptureContext {
+  repoRoot: string;
+  baseSha: string;
+  agent: AiAgent;
+  sessionId: string;
+  model: string | null;
+  storePromptContent: boolean;
+}
+
+async function setupCaptureContext(
+  filePath: string,
+  agent: AiAgent,
+  conversationId: string,
+  model: string | null
+): Promise<CaptureContext | null> {
+  const repoRoot = await findRepoRoot(filePath);
+  if (!repoRoot) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] No git repo found for ${filePath}`);
+    }
+    return null;
+  }
+
+  ensureAgentBlameDirs(repoRoot);
+
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
+
+  const baseSha = await getGitHead(repoRoot);
+  if (!baseSha) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] No HEAD commit found in ${repoRoot}`);
+    }
+    return null;
+  }
+
+  // Smart cleanup: only clean up working directories for commits that:
+  // 1. Are ancestors of current HEAD (we've moved past them)
+  // 2. Have git notes (deltas were processed)
+  // This preserves deltas for reset/recommit and stash scenarios
+  await cleanupProcessedWorkingDirs(repoRoot, baseSha);
+
+  const sessionId = generateSessionId(agent, conversationId);
+  const normalizedModel = normalizeModelName(model);
+
+  // Load config setting for prompt content storage
+  const storePromptContent = await getConfig(repoRoot, 'storePromptContent');
+
+  return {
+    repoRoot,
+    baseSha,
+    agent,
+    sessionId,
+    model: normalizedModel,
+    storePromptContent,
+  };
+}
+
+// =============================================================================
+// Delta Capture (v3 - The Only Way)
+// =============================================================================
+
+/**
+ * Detect and record human edits since last checkpoint.
+ *
+ * IMPORTANT: We need to be careful not to mark another AI tool's edits as human.
+ * The most reliable baseline is the most recent delta's afterBlob (from any session).
+ * This handles:
+ * 1. Cross-session detection (another AI edited the file)
+ * 2. Same-session async race (PostToolUse is async, so checkpoint might be stale)
+ *
+ * Priority:
+ * 1. Last delta's afterBlob (most reliable - represents actual file state)
+ * 2. Checkpoint content (fallback if no delta exists)
+ */
+async function detectAndRecordHumanEdits(
+  ctx: CaptureContext,
+  conversationId: string,
+  filePath: string
+): Promise<void> {
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.repoRoot, filePath);
+  const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+  // Read current file content first
+  const currentContent = readFileContent(absolutePath);
+  if (currentContent === null) {
+    return;
+  }
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] detectHumanEdits: ${relativePath}`);
+  }
+
+  // Priority 1: Use the last delta's afterBlob as baseline (most reliable)
+  // This handles both cross-session AND same-session scenarios
+  // (e.g., when async PostToolUse writes delta but checkpoint is stale)
+  let beforeContent: string | null = null;
+  const lastDelta = getLastDeltaForFile(ctx.repoRoot, ctx.baseSha, relativePath);
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame]   lastDelta: ${lastDelta ? `session=${lastDelta.sessionId?.slice(0,8) || 'human'}, afterBlob=${lastDelta.afterBlob?.slice(0,8)}` : 'null'}`);
+  }
+
+  if (lastDelta?.afterBlob) {
+    try {
+      beforeContent = await loadSnapshot(ctx.repoRoot, lastDelta.afterBlob);
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame]   Loaded afterBlob: ${beforeContent?.length} chars`);
+      }
+    } catch (err) {
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame]   Failed to load afterBlob: ${err}`);
+      }
+      // Fall through to checkpoint
     }
   }
 
-  return result.length > 0 ? result : null;
+  // Priority 2: Fall back to checkpoint if no delta afterBlob available
+  if (beforeContent === null) {
+    beforeContent = await getCheckpointContent(ctx.repoRoot, conversationId, relativePath);
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame]   checkpoint content: ${beforeContent ? beforeContent.length + ' chars' : 'null'}`);
+    }
+  }
+
+  // No baseline available - can't detect changes
+  if (beforeContent === null) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame]   No baseline - skipping`);
+    }
+    return;
+  }
+
+  const hunks = computeDiff(beforeContent, currentContent);
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame]   beforeContent: ${beforeContent.length} chars, currentContent: ${currentContent.length} chars`);
+    console.error(`[agentblame]   diff hunks: ${hunks.length} (${hunks.map(h => `L${h.newStart}+${h.newCount}`).join(',')})`);
+  }
+
+  if (hunks.length === 0) {
+    // Update checkpoint even if no changes (keeps it current)
+    await captureFileCheckpoint(ctx.repoRoot, conversationId, relativePath);
+    return;
+  }
+
+  // Store afterBlob for cross-session detection
+  const afterBlob = await storeSnapshot(ctx.repoRoot, currentContent);
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame]   RECORDING HUMAN DELTA: ${relativePath} with ${hunks.length} hunks`);
+  }
+
+  const humanDelta = createHumanDelta(relativePath, hunks, afterBlob);
+  appendDelta(ctx.repoRoot, ctx.baseSha, humanDelta);
+
+  // Update checkpoint to current state
+  await captureFileCheckpoint(ctx.repoRoot, conversationId, relativePath);
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(
+      `[agentblame] Detected human edit: ${relativePath} (${hunks.length} hunks)`
+    );
+  }
+}
+
+/**
+ * Record an AI edit delta.
+ */
+async function recordAIDelta(
+  ctx: CaptureContext,
+  filePath: string,
+  beforeContent: string | null,
+  afterContent: string
+): Promise<void> {
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.repoRoot, filePath);
+  const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+  const before = beforeContent ?? "";
+
+  const hunks = computeDiff(before, afterContent);
+  if (hunks.length === 0) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] recordAIDelta: no diff for ${relativePath} (before=${before.length} chars, after=${afterContent.length} chars)`);
+    }
+    return;
+  }
+
+  // Store afterBlob for cross-session human edit detection
+  const afterBlob = await storeSnapshot(ctx.repoRoot, afterContent);
+
+  const latestPrompt = getLatestPromptForSession(ctx.sessionId);
+  const promptId = latestPrompt?.id ?? null;
+
+  const aiDelta = createAIDelta(relativePath, ctx.sessionId, promptId, hunks, afterBlob);
+  appendDelta(ctx.repoRoot, ctx.baseSha, aiDelta);
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(
+      `[agentblame] Recorded AI delta: ${relativePath} (${hunks.length} hunks, prompt: ${promptId}, lines: ${hunks.map(h => `${h.newStart}+${h.newCount}`).join(',')})`
+    );
+    console.error(`[agentblame]   stored path: "${relativePath}"`);
+  }
+}
+
+/**
+ * Get before content from checkpoint or git HEAD.
+ */
+async function getBeforeContent(
+  ctx: CaptureContext,
+  conversationId: string,
+  filePath: string
+): Promise<string | null> {
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.repoRoot, filePath);
+  const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+  const beforeBlob = await getBeforeBlob(ctx.repoRoot, conversationId, relativePath);
+  if (!beforeBlob) {
+    return null;
+  }
+
+  try {
+    return await loadSnapshot(ctx.repoRoot, beforeBlob);
+  } catch {
+    return null;
+  }
 }
 
 // =============================================================================
 // Payload Processing
 // =============================================================================
 
-function parseArgs(): { provider: "cursor" | "claude" | "opencode"; event?: string } {
+function parseArgs(): {
+  provider: "cursor" | "claude" | "opencode";
+  event?: string;
+} {
   const args = process.argv.slice(2);
   let provider: "cursor" | "claude" | "opencode" = "cursor";
   let event: string | undefined;
@@ -372,359 +475,324 @@ function parseArgs(): { provider: "cursor" | "claude" | "opencode"; event?: stri
   return { provider, event };
 }
 
-/**
- * Save an edit to the SQLite database
- */
-function saveEdit(edit: CapturedEdit): void {
-  insertEdit({
-    timestamp: edit.timestamp,
-    provider: edit.provider,
-    filePath: edit.filePath,
-    model: edit.model,
-    content: edit.content,
-    contentHash: edit.contentHash,
-    contentHashNormalized: edit.contentHashNormalized,
-    editType: edit.editType,
-    oldContent: edit.oldContent,
-    lines: edit.lines,
-    sessionId: edit.sessionId,
-    toolUseId: edit.toolUseId,
+async function processCursorBeforeSubmitPrompt(
+  payload: CursorPayload
+): Promise<void> {
+  const workspaceRoot = payload.workspace_roots?.[0];
+  if (!workspaceRoot) return;
+
+  const conversationId = payload.conversation_id || `cursor-${Date.now()}`;
+  const ctx = await setupCaptureContext(
+    workspaceRoot,
+    "cursor",
+    conversationId,
+    payload.model || null
+  );
+  if (!ctx) return;
+
+  upsertSession({
+    id: ctx.sessionId,
+    agent: "cursor",
+    model: ctx.model,
+    conversationId,
   });
+
+  // Detect human edits on existing checkpoints, then capture new checkpoint
+  try {
+    const existingCheckpoint = loadCheckpoint(ctx.repoRoot, conversationId);
+    if (existingCheckpoint) {
+      for (const filePath of Object.keys(existingCheckpoint.files)) {
+        await detectAndRecordHumanEdits(ctx, conversationId, filePath);
+      }
+    }
+
+    await captureBeforePromptCheckpoint(ctx.repoRoot, conversationId);
+  } catch (err) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] Failed to capture checkpoint:`, err);
+    }
+  }
+
+  // Store prompt if provided
+  const prompt = payload.prompt;
+  if (prompt) {
+    const contentHash = hashPromptContent(prompt);
+    if (!promptExists(ctx.sessionId, contentHash)) {
+      insertPrompt({
+        sessionId: ctx.sessionId,
+        content: ctx.storePromptContent ? prompt : null,
+        contentHash,
+      });
+
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame] Captured prompt: ${prompt.substring(0, 100)}...`);
+      }
+    }
+  }
 }
 
 async function processCursorPayload(
   payload: CursorPayload,
   event: string
-): Promise<CapturedEdit[]> {
-  const edits: CapturedEdit[] = [];
-  const timestamp = new Date().toISOString();
+): Promise<void> {
+  if (event === "beforeSubmitPrompt") {
+    await processCursorBeforeSubmitPrompt(payload);
+    return;
+  }
 
-  // Only process afterFileEdit (Composer/Agent mode)
-  // Skip afterTabFileEdit - tab completions fire as fragments that can't be matched
   if (event === "afterTabFileEdit") {
-    return edits;
+    return;
   }
 
   if (!payload.edits || payload.edits.length === 0) {
-    return edits;
+    return;
   }
 
-  // Read the file to derive line numbers (Cursor doesn't provide them)
-  const fileLines = await readFileLines(payload.file_path);
+  const filePath = payload.file_path;
+  if (!filePath) return;
 
-  for (const edit of payload.edits) {
-    const oldString = edit.old_string || "";
-    const newString = edit.new_string || "";
+  const conversationId = payload.conversation_id || `cursor-${Date.now()}`;
+  const ctx = await setupCaptureContext(
+    filePath,
+    "cursor",
+    conversationId,
+    payload.model || null
+  );
+  if (!ctx) return;
 
-    if (!newString) continue;
+  upsertSession({
+    id: ctx.sessionId,
+    agent: "cursor",
+    model: ctx.model,
+    conversationId,
+  });
 
-    // Extract only the added content
-    const addedContent = extractAddedContent(oldString, newString);
-    if (!addedContent.trim()) continue;
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.repoRoot, filePath);
+  const relativePath = makeRelative(ctx.repoRoot, absolutePath);
 
-    let lines: CapturedLine[];
 
-    // Try to derive line numbers if we have the file
-    if (fileLines && oldString) {
-      const linesWithNumbers = findEditLocation(fileLines, oldString, newString);
-      if (linesWithNumbers && linesWithNumbers.length > 0) {
-        lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
-      } else {
-        // Fallback to basic hashing without line numbers
-        lines = hashLines(addedContent);
-      }
-    } else {
-      // No file or no old_string - hash without line numbers
-      lines = hashLines(addedContent);
-    }
+  // Get before/after content and record delta
+  const beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+  const afterContent = readFileContent(absolutePath);
 
-    if (lines.length === 0) continue;
-
-    edits.push({
-      timestamp,
-      provider: "cursor",
-      filePath: payload.file_path,
-      model: payload.model || null,
-      lines,
-      content: addedContent,
-      contentHash: computeHash(addedContent),
-      contentHashNormalized: computeNormalizedHash(addedContent),
-      editType: determineEditType(oldString, newString),
-      oldContent: oldString || undefined,
-      sessionId: payload.conversation_id,
-      toolUseId: payload.generation_id,
-    });
+  if (afterContent) {
+    await recordAIDelta(ctx, filePath, beforeContent, afterContent);
+    // Update checkpoint to current state so next beforeSubmitPrompt doesn't
+    // incorrectly detect this AI edit as a "human edit"
+    await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
   }
 
-  return edits;
+  insertToolCall({
+    sessionId: ctx.sessionId,
+    toolName: "edit",
+    filePath: relativePath,
+  });
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] Captured Cursor edit: ${filePath}`);
+  }
 }
 
-async function processClaudePayload(payload: ClaudePayload): Promise<CapturedEdit[]> {
-  const edits: CapturedEdit[] = [];
-
-  // CRITICAL: Skip payloads that are actually from Cursor.
-  // Both Cursor and Claude Code can trigger hooks from .claude/settings.json,
-  // so we need to detect Cursor payloads and skip them here.
-  // Cursor payloads have cursor_version field, Claude payloads don't.
+async function processClaudePayload(payload: ClaudePayload): Promise<void> {
   if ((payload as any).cursor_version) {
-    return edits;
+    return;
   }
 
-  // CRITICAL: Only process if this is an actual Edit or Write tool usage from Claude.
-  // Claude Code's hooks fire for various reasons, but we only want to capture
-  // when Claude actually performed an edit/write operation.
-  // Without a valid tool_name, this is likely a spurious trigger (e.g., from file
-  // watcher detecting external changes).
-  const toolName = payload.tool_name?.toLowerCase() || "";
-  if (toolName !== "edit" && toolName !== "write" && toolName !== "multiedit") {
-    return edits;
-  }
+  const toolName = payload.tool_name || "";
+  if (!toolName) return;
 
-  const timestamp = new Date().toISOString();
-
-  // Claude Code has tool_input with the actual content
+  const hookEvent = payload.hook_event_name || "PostToolUse";
   const toolInput = payload.tool_input;
   const toolResponse = payload.tool_response;
-  const filePath = toolResponse?.filePath || toolInput?.file_path || payload.file_path;
+  const filePath =
+    toolResponse?.filePath || toolInput?.file_path || payload.file_path;
 
-  if (!filePath) return edits;
+  const toolNameLower = toolName.toLowerCase();
+  const isFileModifying =
+    toolNameLower === "edit" ||
+    toolNameLower === "write" ||
+    toolNameLower === "multiedit";
 
-  // Extract session info for correlation
-  const sessionId = payload.session_id;
-  const toolUseId = payload.tool_use_id;
+  const pathForRepo = filePath || payload.transcript_path;
+  if (!pathForRepo) return;
 
-  // Extract model from transcript file (Claude Code provides transcript_path in hook payload)
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] Claude ${hookEvent} ${toolName}:`);
+    console.error(`[agentblame]   toolResponse.filePath: ${toolResponse?.filePath}`);
+    console.error(`[agentblame]   toolInput.file_path: ${toolInput?.file_path}`);
+    console.error(`[agentblame]   payload.file_path: ${payload.file_path}`);
+    console.error(`[agentblame]   resolved filePath: ${filePath}`);
+  }
+
   let model: string | null = null;
   if (payload.transcript_path) {
     model = await extractModelFromTranscript(payload.transcript_path);
   }
-  // Fallback to generic "claude" if transcript parsing fails
   if (!model) {
     model = "claude";
   }
 
-  // For Edit/MultiEdit tools, REQUIRE structuredPatch.
-  // Without structuredPatch, we cannot accurately determine what Claude added.
-  // Spurious triggers (e.g., file watcher detecting external changes) won't have
-  // structuredPatch and would incorrectly capture the entire file.
-  if (toolName === "edit" || toolName === "multiedit") {
-    if (!toolResponse?.structuredPatch || toolResponse.structuredPatch.length === 0) {
-      // No structuredPatch - skip this capture to avoid incorrect attribution
-      // Log for debugging missing captures
-      if (process.env.AGENTBLAME_DEBUG) {
-        console.error(`[agentblame] Skipping ${toolName} for ${filePath}: no structuredPatch in tool_response`);
-        console.error(`[agentblame] tool_response keys: ${toolResponse ? Object.keys(toolResponse).join(", ") : "null"}`);
+  const conversationId = payload.session_id || `claude-${Date.now()}`;
+  const ctx = await setupCaptureContext(pathForRepo, "claude", conversationId, model);
+  if (!ctx) return;
+
+  upsertSession({
+    id: ctx.sessionId,
+    agent: "claude",
+    model: ctx.model,
+    conversationId,
+  });
+
+  // Extract and store prompt
+  if (payload.transcript_path) {
+    const prompt = await extractPromptFromTranscript(payload.transcript_path);
+    if (prompt) {
+      const contentHash = hashPromptContent(prompt);
+      if (!promptExists(ctx.sessionId, contentHash)) {
+        insertPrompt({
+          sessionId: ctx.sessionId,
+          content: ctx.storePromptContent ? prompt : null,
+          contentHash,
+        });
       }
-      return edits;
     }
-
-    // Get original file lines for context
-    const originalFileLines = (toolResponse.originalFile || "").split("\n");
-
-    // Parse the structured patch to get added lines with line numbers
-    const addedLinesWithNumbers = parseStructuredPatch(
-      toolResponse.structuredPatch,
-      originalFileLines
-    );
-
-    if (addedLinesWithNumbers.length === 0) return edits;
-
-    // Hash lines with their line numbers and context
-    const lines = hashLinesWithNumbers(addedLinesWithNumbers, originalFileLines);
-    if (lines.length === 0) return edits;
-
-    // Aggregate content
-    const addedContent = addedLinesWithNumbers.map(l => l.content).join("\n");
-
-    edits.push({
-      timestamp,
-      provider: "claudeCode",
-      filePath,
-      model,
-      lines,
-      content: addedContent,
-      contentHash: computeHash(addedContent),
-      contentHashNormalized: computeNormalizedHash(addedContent),
-      editType: "modification",
-      sessionId,
-      toolUseId,
-    });
-
-    return edits;
   }
 
-  // Handle Write tool (new file creation)
-  // For Write, we need content
-  if (toolName === "write") {
-    const content = toolInput?.content || payload.content;
-
-    if (!content || !content.trim()) {
-      return edits;
+  // PreToolUse: detect human edits and capture checkpoint
+  if (hookEvent === "PreToolUse" && isFileModifying && filePath) {
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] PreToolUse: ${filePath}`);
     }
+    await detectAndRecordHumanEdits(ctx, conversationId, filePath);
+    await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
 
-    const lines = hashLines(content);
-    if (lines.length === 0) return edits;
-
-    edits.push({
-      timestamp,
-      provider: "claudeCode",
-      filePath,
-      model,
-      lines,
-      content,
-      contentHash: computeHash(content),
-      contentHashNormalized: computeNormalizedHash(content),
-      editType: "addition",
-      sessionId,
-      toolUseId,
-    });
-    return edits;
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] PreToolUse complete: ${filePath}`);
+    }
+    return;
   }
 
-  // Unknown tool type that passed the initial check - skip
-  return edits;
+  // PostToolUse: record AI delta
+  if (hookEvent === "PostToolUse" && isFileModifying && filePath) {
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(ctx.repoRoot, filePath);
+    const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+    const beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+    const afterContent = readFileContent(absolutePath);
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] PostToolUse ${toolName}: ${relativePath}`);
+      console.error(`[agentblame]   beforeContent: ${beforeContent ? beforeContent.length + ' chars' : 'null'}`);
+      console.error(`[agentblame]   afterContent: ${afterContent ? afterContent.length + ' chars' : 'null'}`);
+    }
+
+    if (afterContent) {
+      await recordAIDelta(ctx, filePath, beforeContent, afterContent);
+      // Update checkpoint to current state so next PreToolUse doesn't
+      // incorrectly detect this AI edit as a "human edit"
+      await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+    } else if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame]   SKIPPED: no afterContent for ${relativePath}`);
+    }
+
+    insertToolCall({
+      sessionId: ctx.sessionId,
+      toolName: toolName.toLowerCase(),
+      filePath: relativePath,
+    });
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] Captured Claude ${toolName}: ${filePath}`);
+    }
+  } else if (!isFileModifying) {
+    // Read-only tools
+    insertToolCall({
+      sessionId: ctx.sessionId,
+      toolName: toolName.toLowerCase(),
+      filePath: filePath ? makeRelative(ctx.repoRoot, filePath) : null,
+    });
+  }
 }
 
-/**
- * Process OpenCode payload.
- * OpenCode provides before/after file content which allows precise line number extraction.
- */
-function processOpenCodePayload(payload: OpenCodePayload): CapturedEdit[] {
-  const edits: CapturedEdit[] = [];
-  const timestamp = new Date().toISOString();
-
+async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
   const filePath = payload.filePath;
-  if (!filePath) return edits;
+  if (!filePath) return;
 
-  const sessionId = payload.sessionID;
-  const toolUseId = payload.callID;
-  const model = payload.model || null;
+  const conversationId = payload.sessionID || `opencode-${Date.now()}`;
+  const ctx = await setupCaptureContext(
+    filePath,
+    "opencode",
+    conversationId,
+    payload.model || null
+  );
+  if (!ctx) return;
 
-  // Handle write tool (new file creation)
-  if (payload.tool === "write" && payload.content) {
-    const content = payload.content;
-    if (!content.trim()) return edits;
+  upsertSession({
+    id: ctx.sessionId,
+    agent: "opencode",
+    model: ctx.model,
+    conversationId,
+  });
 
-    // For new files, all lines are added
-    const fileLines = content.split("\n");
-    const linesWithNumbers = fileLines
-      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
-      .filter(l => l.content.trim());
-
-    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
-    if (lines.length === 0) return edits;
-
-    edits.push({
-      timestamp,
-      provider: "opencode",
-      filePath,
-      model,
-      lines,
-      content,
-      contentHash: computeHash(content),
-      contentHashNormalized: computeNormalizedHash(content),
-      editType: "addition",
-      sessionId,
-      toolUseId,
-    });
-
-    return edits;
-  }
-
-  // Handle edit tool
-  if (payload.tool === "edit") {
-    // OpenCode provides full before/after content - use it for precise line detection
-    if (payload.before !== undefined && payload.after !== undefined) {
-      const beforeLines = payload.before.split("\n");
-      const afterLines = payload.after.split("\n");
-
-      // Use diffLines to find added lines with their positions
-      const parts = diffLines(payload.before, payload.after);
-      const addedLinesWithNumbers: Array<{ content: string; lineNumber: number }> = [];
-
-      let afterLineIndex = 0;
-      for (const part of parts) {
-        const partLines = part.value.split("\n");
-        // Remove empty string from split if value ends with \n
-        if (partLines[partLines.length - 1] === "") {
-          partLines.pop();
-        }
-
-        if (part.added) {
-          // These lines were added
-          for (const line of partLines) {
-            addedLinesWithNumbers.push({
-              content: line,
-              lineNumber: afterLineIndex + 1, // 1-indexed
-            });
-            afterLineIndex++;
-          }
-        } else if (part.removed) {
-          // Removed lines don't affect after line index
-        } else {
-          // Context lines - advance the after line index
-          afterLineIndex += partLines.length;
-        }
-      }
-
-      if (addedLinesWithNumbers.length === 0) return edits;
-
-      // Filter empty lines and hash with context
-      const nonEmptyLines = addedLinesWithNumbers.filter(l => l.content.trim());
-      if (nonEmptyLines.length === 0) return edits;
-
-      const lines = hashLinesWithNumbers(nonEmptyLines, afterLines);
-      if (lines.length === 0) return edits;
-
-      const addedContent = nonEmptyLines.map(l => l.content).join("\n");
-
-      edits.push({
-        timestamp,
-        provider: "opencode",
-        filePath,
-        model,
-        lines,
-        content: addedContent,
-        contentHash: computeHash(addedContent),
-        contentHashNormalized: computeNormalizedHash(addedContent),
-        editType: "modification",
-        oldContent: payload.oldString,
-        sessionId,
-        toolUseId,
+  if (payload.prompt) {
+    const contentHash = hashPromptContent(payload.prompt);
+    if (!promptExists(ctx.sessionId, contentHash)) {
+      insertPrompt({
+        sessionId: ctx.sessionId,
+        content: ctx.storePromptContent ? payload.prompt : null,
+        contentHash,
       });
-
-      return edits;
     }
-
-    // Fallback: use oldString/newString if before/after not available
-    const oldString = payload.oldString || "";
-    const newString = payload.newString || "";
-
-    if (!newString) return edits;
-
-    const addedContent = extractAddedContent(oldString, newString);
-    if (!addedContent.trim()) return edits;
-
-    const lines = hashLines(addedContent);
-    if (lines.length === 0) return edits;
-
-    edits.push({
-      timestamp,
-      provider: "opencode",
-      filePath,
-      model,
-      lines,
-      content: addedContent,
-      contentHash: computeHash(addedContent),
-      contentHashNormalized: computeNormalizedHash(addedContent),
-      editType: determineEditType(oldString, newString),
-      oldContent: oldString || undefined,
-      sessionId,
-      toolUseId,
-    });
   }
 
-  return edits;
+  // Before hook: detect human edits and capture checkpoint
+  if (payload.hook_event === "before") {
+    await detectAndRecordHumanEdits(ctx, conversationId, filePath);
+    await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] OpenCode before checkpoint: ${filePath}`);
+    }
+    return;
+  }
+
+  // After hook: record AI delta
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.repoRoot, filePath);
+  const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+  // Get before content (OpenCode may provide it directly)
+  let beforeContent: string | null = null;
+  if (payload.before) {
+    beforeContent = payload.before;
+  } else {
+    beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+  }
+
+  // Get after content
+  const afterContent = payload.after ?? readFileContent(absolutePath);
+
+  if (afterContent) {
+    await recordAIDelta(ctx, filePath, beforeContent, afterContent);
+    // Update checkpoint to current state so next before hook doesn't
+    // incorrectly detect this AI edit as a "human edit"
+    await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+  }
+
+  insertToolCall({
+    sessionId: ctx.sessionId,
+    toolName: payload.tool,
+    filePath: relativePath,
+  });
+
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] Captured OpenCode ${payload.tool}: ${filePath}`);
+  }
 }
 
 // =============================================================================
@@ -746,60 +814,31 @@ export async function runCapture(): Promise<void> {
     const { provider, event } = parseArgs();
     const input = await readStdin();
 
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] Capture: provider=${provider}, event=${event}`);
+    }
+
     if (!input.trim()) {
       process.exit(0);
     }
 
     const data = JSON.parse(input);
-
-    // The hook receives the payload directly or wrapped
     const payload = data.payload || data;
-
-    let edits: CapturedEdit[] = [];
 
     if (provider === "cursor") {
       const eventName = event || data.hook_event_name || "afterFileEdit";
-      edits = await processCursorPayload(payload as CursorPayload, eventName);
+      await processCursorPayload(payload as CursorPayload, eventName);
     } else if (provider === "claude") {
-      edits = await processClaudePayload(payload as ClaudePayload);
+      await processClaudePayload(payload as ClaudePayload);
     } else if (provider === "opencode") {
-      edits = processOpenCodePayload(payload as OpenCodePayload);
-    }
-
-    // Save all edits to SQLite database
-    if (process.env.AGENTBLAME_DEBUG && edits.length === 0) {
-      console.error(`[agentblame] No edits extracted from ${provider} payload`);
-    }
-
-    for (const edit of edits) {
-      // Find the agentblame directory for this file
-      const agentblameDir = findAgentBlameDir(edit.filePath);
-      if (!agentblameDir) {
-        // File is not in an initialized repo, skip silently
-        if (process.env.AGENTBLAME_DEBUG) {
-          console.error(`[agentblame] No agentblame dir found for ${edit.filePath}`);
-        }
-        continue;
-      }
-
-      // Set the database directory and save
-      setAgentBlameDir(agentblameDir);
-      try {
-        saveEdit(edit);
-        if (process.env.AGENTBLAME_DEBUG) {
-          console.error(`[agentblame] Saved edit for ${edit.filePath}: ${edit.lines.length} lines`);
-        }
-      } catch (saveErr) {
-        // Log database errors even without debug mode since they indicate lost data
-        console.error(`[agentblame] Failed to save edit for ${edit.filePath}:`, saveErr);
-      }
+      await processOpenCodePayload(payload as OpenCodePayload);
     }
 
     process.exit(0);
   } catch (err) {
-    // Silent failure - don't interrupt the editor
-    console.error("Agent Blame capture error:", err);
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error("Agent Blame capture error:", err);
+    }
     process.exit(0);
   }
 }
-

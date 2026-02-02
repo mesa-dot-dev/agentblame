@@ -2,7 +2,7 @@
  * GitHub DOM manipulation utilities
  */
 
-import type { PRContext, DiffLine, LineAttribution } from "../types";
+import type { PRContext, DiffLine, LineAttribution, GitNotesAttribution, SessionMetadata, PromptEntry, PromptInfo } from "../types";
 
 // Debug logging - disabled in production
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -436,7 +436,8 @@ export function hasMarker(element: HTMLElement): boolean {
 }
 
 /**
- * Inject AI attribution gutter into a line (on new line number cell)
+ * Inject AI attribution marker into a line
+ * Shows prompt index (P1, P2) before line number with hover tooltip
  */
 export function injectMarker(
   element: HTMLElement,
@@ -449,10 +450,25 @@ export function injectMarker(
   const lineNumCell = findNewLineNumberCell(element);
   if (lineNumCell) {
     lineNumCell.classList.add("ab-gutter-ai");
-    lineNumCell.setAttribute(
-      "title",
-      `AI Generated (${attribution.provider}${attribution.model ? ` - ${attribution.model}` : ""})`,
-    );
+
+    // Add prompt index badge before the line number
+    if (attribution.promptIndex) {
+      const promptBadge = document.createElement("span");
+      promptBadge.className = "ab-prompt-badge";
+      promptBadge.textContent = attribution.promptIndex;
+
+      // Store tooltip data as data attributes
+      promptBadge.dataset.promptIndex = attribution.promptIndex;
+      promptBadge.dataset.agent = attribution.provider;
+      if (attribution.model) {
+        promptBadge.dataset.model = attribution.model;
+      }
+      if (attribution.promptContent) {
+        promptBadge.dataset.content = attribution.promptContent;
+      }
+
+      lineNumCell.insertBefore(promptBadge, lineNumCell.firstChild);
+    }
   }
 }
 
@@ -460,6 +476,15 @@ export function injectMarker(
  * Remove all AI attribution markers from the page
  */
 export function removeAllMarkers(): void {
+  // Hide tooltip first
+  cleanupTooltip();
+
+  // Remove prompt badges first (they're inside gutter cells)
+  const promptBadges = document.querySelectorAll(".ab-prompt-badge");
+  promptBadges.forEach((b) => {
+    b.remove();
+  });
+
   // Remove AI gutter classes and titles from line number cells
   const aiGutters = document.querySelectorAll(".ab-gutter-ai");
   aiGutters.forEach((el) => {
@@ -479,14 +504,63 @@ export function removeAllMarkers(): void {
 }
 
 /**
- * Inject PR summary banner
- * Supports both legacy and React-based GitHub UI
- * Banner should appear right above the diff files area in both UIs
- * If a loading banner already exists, it will be updated with the stats
+ * Format tool name for display
+ */
+function formatToolName(tool: string): string {
+  const names: Record<string, string> = {
+    edit: "Edit",
+    write: "Write",
+    read: "Read",
+    bash: "Bash",
+    glob: "Glob",
+    grep: "Grep",
+    multiedit: "MultiEdit",
+  };
+  return names[tool.toLowerCase()] || tool;
+}
+
+/**
+ * Format provider name for display
+ */
+function formatProviderName(provider: string): string {
+  const names: Record<string, string> = {
+    cursor: "Cursor",
+    claude: "Claude Code",
+    opencode: "OpenCode",
+  };
+  return names[provider.toLowerCase()] || provider;
+}
+
+/**
+ * Get provider color
+ */
+function getProviderColor(provider: string): string {
+  const colors: Record<string, string> = {
+    cursor: "#5B8DEE",
+    claude: "#E07B53",
+    opencode: "#4DBBAA",
+  };
+  return colors[provider.toLowerCase()] || "#6e7781";
+}
+
+/**
+ * Truncate text with ellipsis
+ */
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + "...";
+}
+
+/**
+ * Inject PR summary banner with metrics
+ * Prompts are shown on hover over P1/P2 badges in the gutter
  */
 export function injectPRSummary(stats: {
   total: number;
   aiGenerated: number;
+  prompts?: PromptInfo[];
+  notes?: Map<string, GitNotesAttribution>;
+  commits?: string[];
 }): void {
   const human = stats.total - stats.aiGenerated;
   const aiPercent =
@@ -497,33 +571,22 @@ export function injectPRSummary(stats: {
     ? chrome.runtime.getURL("icons/icon48.png")
     : "";
 
+  // Colors
+  const aiColor = "#b86540";
+  const humanColor = "#238636";
+
   const statsHtml = `
-    <div class="ab-pr-summary-header">
-      ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : '<span class="ab-pr-summary-icon">✨</span>'}
-      <span class="ab-pr-summary-title">Agent Blame</span>
-    </div>
-    <div class="ab-pr-summary-stats">
-      <div class="ab-stat ab-stat-ai">
-        <div class="ab-stat-value-row">
-          <span class="ab-stat-icon">✨</span>
-          <span class="ab-stat-value">${stats.aiGenerated}</span>
+    <div class="ab-pr-summary-container">
+      <div class="ab-pr-summary-header">
+        <div class="ab-header-left">
+          ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : ""}
+          <span class="ab-pr-summary-title">Agent Blame</span>
         </div>
-        <span class="ab-stat-label">AI Generated</span>
-      </div>
-      <div class="ab-stat-divider"></div>
-      <div class="ab-stat ab-stat-human">
-        <div class="ab-stat-value-row">
-          <span class="ab-stat-icon">👤</span>
-          <span class="ab-stat-value">${human}</span>
+        <div class="ab-header-right">
+          <span class="ab-metric ab-metric-ai" style="color: ${aiColor};">AI: ${stats.aiGenerated} (${aiPercent}%)</span>
+          <span class="ab-metric-divider">│</span>
+          <span class="ab-metric ab-metric-human" style="color: ${humanColor};">Human: ${human} (${100 - aiPercent}%)</span>
         </div>
-        <span class="ab-stat-label">Human Written</span>
-      </div>
-      <div class="ab-stat-divider"></div>
-      <div class="ab-stat ab-stat-percent ${aiPercent >= 50 ? 'high-ai' : ''}">
-        <div class="ab-stat-value-row">
-          <span class="ab-stat-value ab-stat-percent-value">${aiPercent}%</span>
-        </div>
-        <span class="ab-stat-label">AI Code</span>
       </div>
     </div>
   `;
@@ -663,26 +726,190 @@ export function hideLoading(): void {
     standaloneLoading.remove();
   }
 
-  // The loading state in the header will be replaced by injectPRSummary
+  // Remove loading summary if present (when we exit early without calling injectPRSummary)
+  const loadingSummary = document.querySelector(".ab-pr-summary-loading");
+  if (loadingSummary) {
+    loadingSummary.remove();
+  }
 }
 
 /**
- * Show error message
+ * Show error message in the Agent Blame header
  */
 export function showError(message: string): void {
-  hideLoading();
+  // Get the extension icon URL
+  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
+    ? chrome.runtime.getURL("icons/icon48.png")
+    : "";
 
-  const headerArea = document.querySelector(
-    ".pull-request-tab-content, #files_bucket, .pr-toolbar",
-  );
-
-  if (!headerArea) {
+  // Check if loading header exists - update it instead of removing
+  const existingSummary = document.querySelector(".ab-pr-summary");
+  if (existingSummary) {
+    existingSummary.classList.remove("ab-pr-summary-loading");
+    existingSummary.classList.add("ab-pr-summary-error");
+    existingSummary.innerHTML = `
+      <div class="ab-pr-summary-header">
+        ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : '<span class="ab-pr-summary-icon">✨</span>'}
+        <span class="ab-pr-summary-title">Agent Blame</span>
+      </div>
+      <div class="ab-pr-summary-stats ab-pr-summary-stats-error">
+        <span class="ab-error-icon">⚠️</span>
+        <span class="ab-error-text">${escapeHtml(message)}</span>
+      </div>
+    `;
     return;
   }
 
-  const error = document.createElement("div");
-  error.className = "ab-error";
-  error.textContent = `Agent Blame: ${message}`;
+  // No existing header - create a new one with error
+  const summary = document.createElement("div");
+  summary.className = "ab-pr-summary ab-pr-summary-error";
+  summary.innerHTML = `
+    <div class="ab-pr-summary-header">
+      ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : '<span class="ab-pr-summary-icon">✨</span>'}
+      <span class="ab-pr-summary-title">Agent Blame</span>
+    </div>
+    <div class="ab-pr-summary-stats ab-pr-summary-stats-error">
+      <span class="ab-error-icon">⚠️</span>
+      <span class="ab-error-text">${escapeHtml(message)}</span>
+    </div>
+  `;
 
-  headerArea.insertBefore(error, headerArea.firstChild);
+  // Try to inject at the same locations as showLoading
+  const firstFileContainer = document.querySelector(".file");
+  if (firstFileContainer?.parentElement) {
+    firstFileContainer.parentElement.insertBefore(summary, firstFileContainer);
+    return;
+  }
+
+  const hpc = document.querySelector("[data-hpc]");
+  if (hpc?.parentElement) {
+    hpc.parentElement.insertBefore(summary, hpc);
+    return;
+  }
+
+  const fallbackArea = document.querySelector("#files_bucket, .pr-toolbar, .pull-request-tab-content");
+  if (fallbackArea) {
+    fallbackArea.insertBefore(summary, fallbackArea.firstChild);
+  }
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(str: string): string {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Singleton tooltip element
+let tooltipElement: HTMLElement | null = null;
+let tooltipTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Initialize the prompt tooltip system using event delegation
+ * Single event listener for all prompt badges - performant approach
+ */
+export function initTooltip(): void {
+  // Only initialize once
+  if (tooltipElement) {
+    return;
+  }
+
+  // Create tooltip element
+  tooltipElement = document.createElement("div");
+  tooltipElement.className = "ab-prompt-tooltip";
+  tooltipElement.style.display = "none";
+  document.body.appendChild(tooltipElement);
+
+  // Event delegation - single listener for all badges
+  document.addEventListener("mouseenter", handleTooltipShow, true);
+  document.addEventListener("mouseleave", handleTooltipHide, true);
+}
+
+/**
+ * Handle showing tooltip on badge hover
+ */
+function handleTooltipShow(e: Event): void {
+  const target = e.target as HTMLElement;
+  if (!target.classList?.contains("ab-prompt-badge")) {
+    return;
+  }
+
+  // Clear any pending hide
+  if (tooltipTimeout) {
+    clearTimeout(tooltipTimeout);
+    tooltipTimeout = null;
+  }
+
+  const { promptIndex, agent, model, content } = target.dataset;
+  if (!tooltipElement || !promptIndex) {
+    return;
+  }
+
+  // Build tooltip content
+  const agentDisplay = formatProviderName(agent || "unknown");
+  const modelDisplay = model ? ` (${truncateText(model, 25)})` : "";
+  const contentDisplay = content || "[prompt content not stored]";
+
+  tooltipElement.innerHTML = `
+    <div class="ab-tooltip-header">
+      <span class="ab-tooltip-index">${escapeHtml(promptIndex)}</span>
+      <span class="ab-tooltip-agent">${escapeHtml(agentDisplay)}${escapeHtml(modelDisplay)}</span>
+    </div>
+    <div class="ab-tooltip-content">${escapeHtml(contentDisplay)}</div>
+  `;
+
+  // Position tooltip near the badge
+  const rect = target.getBoundingClientRect();
+  const tooltipWidth = 320;
+
+  // Position to the right of the badge, or left if not enough space
+  let left = rect.right + 8;
+  if (left + tooltipWidth > window.innerWidth - 20) {
+    left = rect.left - tooltipWidth - 8;
+  }
+
+  // Ensure it doesn't go off screen on the left
+  if (left < 20) {
+    left = 20;
+  }
+
+  // Vertical centering with the badge
+  let top = rect.top + window.scrollY - 10;
+
+  // Ensure it doesn't go off screen on top
+  if (top < window.scrollY + 10) {
+    top = window.scrollY + 10;
+  }
+
+  tooltipElement.style.left = `${left}px`;
+  tooltipElement.style.top = `${top}px`;
+  tooltipElement.style.display = "block";
+}
+
+/**
+ * Handle hiding tooltip when leaving badge
+ */
+function handleTooltipHide(e: Event): void {
+  const target = e.target as HTMLElement;
+  if (!target.classList?.contains("ab-prompt-badge")) {
+    return;
+  }
+
+  // Small delay before hiding to prevent flicker
+  tooltipTimeout = setTimeout(() => {
+    if (tooltipElement) {
+      tooltipElement.style.display = "none";
+    }
+  }, 100);
+}
+
+/**
+ * Clean up tooltip when removing markers
+ */
+export function cleanupTooltip(): void {
+  if (tooltipElement) {
+    tooltipElement.style.display = "none";
+  }
 }

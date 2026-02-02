@@ -5,8 +5,8 @@
  * positioned after "Pulse". Only shows if analytics data exists for the repo.
  */
 
-import { showAnalyticsPage, hideAnalyticsPage } from "./analytics-overlay";
-import { checkAnalyticsExist } from "../lib/mock-analytics";
+import { showAnalyticsPage, hideAnalyticsPage } from "./analyticsOverlay";
+import { checkAnalyticsExist } from "../lib/mockAnalytics";
 
 const SIDEBAR_ITEM_ID = "agentblame-sidebar-item";
 

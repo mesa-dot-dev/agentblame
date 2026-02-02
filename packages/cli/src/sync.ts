@@ -9,10 +9,10 @@ import { execSync, spawnSync } from "node:child_process";
 import {
   getRepoRoot,
   fetchNotesQuiet,
-  type GitNotesAttribution,
+  buildNote,
+  parseNote,
 } from "./lib";
-
-type NoteAttribution = GitNotesAttribution["attributions"][number];
+import type { Attribution, SessionMetadata } from "./lib/types";
 
 interface SyncOptions {
   dryRun?: boolean;
@@ -44,7 +44,7 @@ function vlog(msg: string, options: SyncOptions): void {
  */
 function findMergeCandidates(
   repoRoot: string,
-  options: SyncOptions,
+  options: SyncOptions
 ): MergeCandidate[] {
   const candidates: MergeCandidate[] = [];
 
@@ -68,7 +68,7 @@ function findMergeCandidates(
     // Check if this commit already has a note
     const hasNote = run(
       `git notes --ref=refs/notes/agentblame show ${sha} 2>/dev/null`,
-      repoRoot,
+      repoRoot
     );
     if (hasNote) {
       vlog(`Skipping ${sha.slice(0, 7)} - already has note`, options);
@@ -77,12 +77,12 @@ function findMergeCandidates(
 
     // Check if it's a single-parent commit (squash or rebase, not merge)
     const parents = run(`git rev-list --parents -n 1 ${sha}`, repoRoot).split(
-      " ",
+      " "
     );
     if (parents.length > 2) {
       vlog(
         `Skipping ${sha.slice(0, 7)} - merge commit (has multiple parents)`,
-        options,
+        options
       );
       continue;
     }
@@ -99,19 +99,19 @@ function findMergeCandidates(
 function fetchPRRef(
   repoRoot: string,
   prNumber: number,
-  options: SyncOptions,
+  options: SyncOptions
 ): boolean {
   vlog(`Fetching refs/pull/${prNumber}/head...`, options);
 
   run(
     `git fetch origin refs/pull/${prNumber}/head:refs/remotes/origin/pr/${prNumber} 2>&1`,
-    repoRoot,
+    repoRoot
   );
 
   // Check if fetch succeeded
   const refExists = run(
     `git rev-parse --verify refs/remotes/origin/pr/${prNumber} 2>/dev/null`,
-    repoRoot,
+    repoRoot
   );
 
   return !!refExists;
@@ -123,9 +123,8 @@ function fetchPRRef(
 function getPRCommits(
   repoRoot: string,
   prNumber: number,
-  baseSha: string,
+  baseSha: string
 ): string[] {
-  // Find merge base between PR head and the base
   const prRef = `refs/remotes/origin/pr/${prNumber}`;
 
   // Get commits that are in PR but not in base
@@ -136,33 +135,32 @@ function getPRCommits(
 }
 
 /**
- * Read attribution note from a commit
+ * Read attribution note from a commit (v3 format)
  */
-function readNote(repoRoot: string, sha: string): GitNotesAttribution | null {
-  const note = run(`git notes --ref=refs/notes/agentblame show ${sha} 2>/dev/null`, repoRoot);
+function readNoteFromCommit(repoRoot: string, sha: string): Attribution | null {
+  const note = run(
+    `git notes --ref=refs/notes/agentblame show ${sha} 2>/dev/null`,
+    repoRoot
+  );
   if (!note) return null;
-  try {
-    return JSON.parse(note);
-  } catch {
-    return null;
-  }
+  return parseNote(note);
 }
 
 /**
- * Write attribution note to a commit
+ * Write attribution note to a commit (v3 format)
  */
-function writeNote(
+function writeNoteToCommit(
   repoRoot: string,
   sha: string,
-  attribution: GitNotesAttribution,
+  attribution: Attribution,
+  sessions: Record<string, SessionMetadata>
 ): boolean {
-  const noteJson = JSON.stringify(attribution);
+  const noteContent = buildNote(attribution, sessions);
   try {
-    // Use spawnSync with array args to avoid shell injection
     const result = spawnSync(
       "git",
-      ["notes", "--ref=refs/notes/agentblame", "add", "-f", "-m", noteJson, sha],
-      { encoding: "utf8", cwd: repoRoot },
+      ["notes", "--ref=refs/notes/agentblame", "add", "-f", "-m", noteContent, sha],
+      { encoding: "utf8", cwd: repoRoot }
     );
     if (result.status !== 0) {
       console.error(`Failed to write note to ${sha}: ${result.stderr}`);
@@ -176,16 +174,16 @@ function writeNote(
 }
 
 /**
- * Get diff hunks from a commit
+ * Get diff hunks from a commit with content
  */
 function getCommitHunks(
   repoRoot: string,
-  sha: string,
+  sha: string
 ): Array<{
   path: string;
   startLine: number;
-  content: string;
-  contentHash: string;
+  endLine: number;
+  lines: Array<{ lineNumber: number; content: string }>;
 }> {
   const diff = run(`git diff-tree -p ${sha}`, repoRoot);
   if (!diff) return [];
@@ -193,46 +191,39 @@ function getCommitHunks(
   const hunks: Array<{
     path: string;
     startLine: number;
-    content: string;
-    contentHash: string;
+    endLine: number;
+    lines: Array<{ lineNumber: number; content: string }>;
   }> = [];
 
   let currentFile = "";
   let lineNumber = 0;
-  let addedLines: string[] = [];
+  let hunkLines: Array<{ lineNumber: number; content: string }> = [];
   let startLine = 0;
-
-  const computeHash = (content: string): string => {
-    const crypto = require("node:crypto");
-    return `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
-  };
 
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ b/")) {
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
+      if (hunkLines.length > 0 && currentFile) {
         hunks.push({
           path: currentFile,
           startLine,
-          content,
-          contentHash: computeHash(content),
+          endLine: startLine + hunkLines.length - 1,
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
       currentFile = line.slice(6);
       continue;
     }
 
     if (line.startsWith("@@")) {
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
+      if (hunkLines.length > 0 && currentFile) {
         hunks.push({
           path: currentFile,
           startLine,
-          content,
-          contentHash: computeHash(content),
+          endLine: startLine + hunkLines.length - 1,
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
 
       const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
@@ -244,36 +235,37 @@ function getCommitHunks(
     }
 
     if (line.startsWith("+") && !line.startsWith("+++")) {
-      if (addedLines.length === 0) {
+      if (hunkLines.length === 0) {
         startLine = lineNumber;
       }
-      addedLines.push(line.slice(1));
+      hunkLines.push({
+        lineNumber,
+        content: line.slice(1),
+      });
       lineNumber++;
       continue;
     }
 
     if (!line.startsWith("-")) {
-      if (addedLines.length > 0 && currentFile) {
-        const content = addedLines.join("\n");
+      if (hunkLines.length > 0 && currentFile) {
         hunks.push({
           path: currentFile,
           startLine,
-          content,
-          contentHash: computeHash(content),
+          endLine: startLine + hunkLines.length - 1,
+          lines: hunkLines,
         });
-        addedLines = [];
+        hunkLines = [];
       }
       lineNumber++;
     }
   }
 
-  if (addedLines.length > 0 && currentFile) {
-    const content = addedLines.join("\n");
+  if (hunkLines.length > 0 && currentFile) {
     hunks.push({
       path: currentFile,
       startLine,
-      content,
-      contentHash: computeHash(content),
+      endLine: startLine + hunkLines.length - 1,
+      lines: hunkLines,
     });
   }
 
@@ -281,91 +273,200 @@ function getCommitHunks(
 }
 
 /**
- * Collect attributions from PR commits with original content
+ * Collect attributions from PR commits (v3 format)
  */
 function collectPRAttributions(
   repoRoot: string,
-  prCommits: string[],
+  prCommits: string[]
 ): {
-  byHash: Map<string, NoteAttribution[]>;
-  withContent: Array<NoteAttribution & { originalContent: string }>;
+  sessions: Record<string, SessionMetadata>;
+  fileRanges: Map<string, Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>>;
 } {
-  const byHash = new Map<string, NoteAttribution[]>();
-  const withContent: Array<NoteAttribution & { originalContent: string }> = [];
+  const allSessions: Record<string, SessionMetadata> = {};
+  // Map: filePath -> sessionId -> ranges with content
+  const fileRanges = new Map<
+    string,
+    Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>
+  >();
 
   for (const sha of prCommits) {
-    const note = readNote(repoRoot, sha);
-    if (!note?.attributions) continue;
+    const note = readNoteFromCommit(repoRoot, sha);
+    if (!note) continue;
 
-    const hunks = getCommitHunks(repoRoot, sha);
-    const hunksByHash = new Map<string, string>();
-    for (const hunk of hunks) {
-      hunksByHash.set(hunk.contentHash, hunk.content);
+    // Collect sessions
+    for (const [sessionId, session] of Object.entries(note.sessions)) {
+      if (!allSessions[sessionId]) {
+        allSessions[sessionId] = session;
+      }
     }
 
-    for (const attr of note.attributions) {
-      const hash = attr.contentHash;
-      if (!byHash.has(hash)) {
-        byHash.set(hash, []);
+    // Get content from the commit diff
+    const hunks = getCommitHunks(repoRoot, sha);
+    const hunksByPath = new Map<string, typeof hunks>();
+    for (const hunk of hunks) {
+      if (!hunksByPath.has(hunk.path)) {
+        hunksByPath.set(hunk.path, []);
       }
-      byHash.get(hash)?.push(attr);
+      hunksByPath.get(hunk.path)!.push(hunk);
+    }
 
-      const content = hunksByHash.get(hash) || "";
-      if (content) {
-        withContent.push({ ...attr, originalContent: content });
+    // Collect file ranges with content
+    for (const [filePath, fileAttr] of Object.entries(note.files)) {
+      if (!fileRanges.has(filePath)) {
+        fileRanges.set(filePath, new Map());
+      }
+      const sessionMap = fileRanges.get(filePath)!;
+
+      for (const range of fileAttr.aiRanges) {
+        if (!sessionMap.has(range.sessionId)) {
+          sessionMap.set(range.sessionId, []);
+        }
+
+        // Find content for this range from hunks
+        const fileHunks = hunksByPath.get(filePath) || [];
+        const content: string[] = [];
+
+        for (const hunk of fileHunks) {
+          for (const line of hunk.lines) {
+            if (line.lineNumber >= range.startLine && line.lineNumber <= range.endLine) {
+              content.push(line.content);
+            }
+          }
+        }
+
+        sessionMap.get(range.sessionId)!.push({
+          startLine: range.startLine,
+          endLine: range.endLine,
+          content,
+        });
       }
     }
   }
 
-  return { byHash, withContent };
+  return { sessions: allSessions, fileRanges };
 }
 
 /**
- * Find contained attributions with precise line numbers
+ * Match content from PR to squash commit and build attribution
  */
-function findContainedAttributions(
-  hunk: { path: string; startLine: number; content: string },
-  attributions: Array<NoteAttribution & { originalContent: string }>,
-): NoteAttribution[] {
-  const results: NoteAttribution[] = [];
+function matchAndBuildAttribution(
+  repoRoot: string,
+  mergeSha: string,
+  prData: ReturnType<typeof collectPRAttributions>,
+  options: SyncOptions
+): { attribution: Attribution; matchCount: number } | null {
+  const mergeHunks = getCommitHunks(repoRoot, mergeSha);
 
-  for (const attr of attributions) {
-    const attrFileName = attr.path.split("/").pop();
-    const hunkFileName = hunk.path.split("/").pop();
-    const sameFile =
-      attrFileName === hunkFileName ||
-      attr.path.endsWith(hunk.path) ||
-      hunk.path.endsWith(attrFileName || "");
-
-    if (!sameFile) continue;
-
-    const aiContent = attr.originalContent.trim();
-    const hunkContent = hunk.content;
-
-    if (!hunkContent.includes(aiContent)) continue;
-
-    const offset = hunkContent.indexOf(aiContent);
-    let startLine = hunk.startLine;
-
-    if (offset > 0) {
-      const contentBeforeAI = hunkContent.slice(0, offset);
-      const linesBeforeAI = contentBeforeAI.split("\n").length - 1;
-      startLine = hunk.startLine + linesBeforeAI;
+  // Build content index from merge commit: path -> lineNumber -> content
+  const mergeContentIndex = new Map<string, Map<number, string>>();
+  for (const hunk of mergeHunks) {
+    if (!mergeContentIndex.has(hunk.path)) {
+      mergeContentIndex.set(hunk.path, new Map());
     }
-
-    const aiLineCount = aiContent.split("\n").length;
-    const endLine = startLine + aiLineCount - 1;
-
-    const { originalContent: _, ...cleanAttr } = attr;
-    results.push({
-      ...cleanAttr,
-      path: hunk.path,
-      startLine: startLine,
-      endLine: endLine,
-    });
+    const lineMap = mergeContentIndex.get(hunk.path)!;
+    for (const line of hunk.lines) {
+      lineMap.set(line.lineNumber, line.content);
+    }
   }
 
-  return results;
+  // Build new attribution
+  const attribution: Attribution = {
+    version: 3,
+    timestamp: new Date().toISOString(),
+    sessions: prData.sessions,
+    files: {},
+  };
+
+  let matchCount = 0;
+
+  // For each file with AI ranges, try to find content in merge commit
+  for (const [filePath, sessionRanges] of prData.fileRanges) {
+    const mergeFileContent = mergeContentIndex.get(filePath);
+    if (!mergeFileContent) {
+      // Try to find file with different path format
+      const matchingPath = Array.from(mergeContentIndex.keys()).find(
+        (p) => p.endsWith(filePath) || filePath.endsWith(p)
+      );
+      if (!matchingPath) continue;
+    }
+
+    const targetPath = mergeContentIndex.has(filePath)
+      ? filePath
+      : Array.from(mergeContentIndex.keys()).find(
+          (p) => p.endsWith(filePath) || filePath.endsWith(p)
+        );
+
+    if (!targetPath) continue;
+
+    const targetContent = mergeContentIndex.get(targetPath)!;
+
+    if (!attribution.files[targetPath]) {
+      attribution.files[targetPath] = {
+        aiRanges: [],
+        humanRanges: [],
+      };
+    }
+
+    for (const [sessionId, ranges] of sessionRanges) {
+      for (const range of ranges) {
+        if (range.content.length === 0) continue;
+
+        // Try to find this content in the merge commit
+        const matchedLines = findContentMatch(targetContent, range.content);
+
+        if (matchedLines) {
+          attribution.files[targetPath].aiRanges.push({
+            sessionId,
+            startLine: matchedLines.start,
+            endLine: matchedLines.end,
+          });
+          matchCount++;
+          vlog(
+            `  Matched: ${targetPath}:${matchedLines.start}-${matchedLines.end} (${sessionId.slice(0, 8)})`,
+            options
+          );
+        }
+      }
+    }
+  }
+
+  if (matchCount === 0) {
+    return null;
+  }
+
+  return { attribution, matchCount };
+}
+
+/**
+ * Find where content appears in the merge commit
+ */
+function findContentMatch(
+  lineMap: Map<number, string>,
+  content: string[]
+): { start: number; end: number } | null {
+  if (content.length === 0) return null;
+
+  const firstLine = content[0];
+  const lineNumbers = Array.from(lineMap.entries())
+    .filter(([_, c]) => c === firstLine)
+    .map(([n]) => n);
+
+  for (const startLine of lineNumbers) {
+    let matches = true;
+    for (let i = 0; i < content.length; i++) {
+      const lineContent = lineMap.get(startLine + i);
+      if (lineContent !== content[i]) {
+        matches = false;
+        break;
+      }
+    }
+
+    if (matches) {
+      return { start: startLine, end: startLine + content.length - 1 };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -375,72 +476,34 @@ function transferNotes(
   repoRoot: string,
   candidate: MergeCandidate,
   prCommits: string[],
-  options: SyncOptions,
+  options: SyncOptions
 ): number {
-  const { byHash, withContent } = collectPRAttributions(repoRoot, prCommits);
+  const prData = collectPRAttributions(repoRoot, prCommits);
 
-  if (byHash.size === 0) {
+  if (Object.keys(prData.sessions).length === 0) {
     vlog(`No attributions found in PR commits`, options);
     return 0;
   }
 
-  vlog(`Found ${byHash.size} unique content hashes`, options);
+  vlog(
+    `Found ${Object.keys(prData.sessions).length} sessions in PR commits`,
+    options
+  );
 
-  const hunks = getCommitHunks(repoRoot, candidate.sha);
-  vlog(`Merge commit has ${hunks.length} hunks`, options);
+  const result = matchAndBuildAttribution(repoRoot, candidate.sha, prData, options);
 
-  const newAttributions: NoteAttribution[] = [];
-  const matchedHashes = new Set<string>();
-
-  for (const hunk of hunks) {
-    // Try exact hash match
-    const attrs = byHash.get(hunk.contentHash);
-    if (attrs && attrs.length > 0) {
-      const attr = attrs[0];
-      newAttributions.push({
-        ...attr,
-        path: hunk.path,
-        startLine: hunk.startLine,
-        endLine: hunk.startLine + hunk.content.split("\n").length - 1,
-      });
-      matchedHashes.add(attr.contentHash);
-      vlog(`  Exact match: ${hunk.path}:${hunk.startLine}`, options);
-      continue;
-    }
-
-    // Fallback: containment matching
-    const unmatchedAttrs = withContent.filter(
-      (a) => !matchedHashes.has(a.contentHash),
-    );
-    const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
-
-    for (const match of containedMatches) {
-      newAttributions.push(match);
-      matchedHashes.add(match.contentHash);
-      vlog(
-        `  Contained match: ${match.path}:${match.startLine}-${match.endLine}`,
-        options,
-      );
-    }
-  }
-
-  if (newAttributions.length === 0) {
+  if (!result) {
+    vlog(`No attributions matched to squash commit`, options);
     return 0;
   }
 
   if (options.dryRun) {
-    console.log(`  Would attach ${newAttributions.length} attribution(s)`);
-    return newAttributions.length;
+    console.log(`  Would attach ${result.matchCount} attribution range(s)`);
+    return result.matchCount;
   }
 
-  const note: GitNotesAttribution = {
-    version: 2,
-    timestamp: new Date().toISOString(),
-    attributions: newAttributions,
-  };
-
-  if (writeNote(repoRoot, candidate.sha, note)) {
-    return newAttributions.length;
+  if (writeNoteToCommit(repoRoot, candidate.sha, result.attribution, prData.sessions)) {
+    return result.matchCount;
   }
 
   return 0;
@@ -494,7 +557,7 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
     console.log("[DRY RUN - no changes will be made]\n");
   }
 
-  // Fetch latest notes from remote (silent, ignores errors)
+  // Fetch latest notes from remote
   await fetchNotesQuiet(repoRoot, "origin", options.verbose);
 
   // Find merge candidates
@@ -503,7 +566,7 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
   if (candidates.length === 0) {
     console.log("No squash/rebase merges found that need notes transferred.");
     console.log(
-      "(Looking for commits with PR numbers like '#123' that don't have notes)",
+      "(Looking for commits with PR numbers like '#123' that don't have notes)"
     );
     return;
   }
@@ -515,7 +578,7 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
 
   for (const candidate of candidates) {
     console.log(
-      `PR #${candidate.prNumber}: ${candidate.message.slice(0, 50)}...`,
+      `PR #${candidate.prNumber}: ${candidate.message.slice(0, 50)}...`
     );
     console.log(`  Commit: ${candidate.sha.slice(0, 7)}`);
 
@@ -544,7 +607,7 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
     const transferred = transferNotes(repoRoot, candidate, prCommits, options);
 
     if (transferred > 0) {
-      console.log(`  Transferred ${transferred} attribution(s)`);
+      console.log(`  Transferred ${transferred} attribution range(s)`);
       totalTransferred += transferred;
       successCount++;
     } else {
@@ -557,7 +620,7 @@ export async function sync(options: SyncOptions = {}): Promise<void> {
   // Summary
   if (totalTransferred > 0) {
     console.log(
-      `\nSummary: Transferred ${totalTransferred} attribution(s) for ${successCount} merge(s)`,
+      `\nSummary: Transferred ${totalTransferred} range(s) for ${successCount} merge(s)`
     );
 
     // Push notes

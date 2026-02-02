@@ -50,14 +50,101 @@ function getHookCommand(
 }
 
 /**
- * OpenCode plugin template that captures edits and sends to agentblame.
- * The plugin hooks into tool.execute.after for edit/write operations.
+ * OpenCode plugin template that captures edits and prompts, and sends to agentblame.
+ * BULLETPROOF: Uses both tool.execute.before and tool.execute.after for accurate capture.
+ * The plugin hooks into:
+ * - message.updated: to capture user prompts
+ * - tool.execute.before: to capture file state BEFORE edit (checkpoint)
+ * - tool.execute.after: to capture file state AFTER edit
  */
 const OPENCODE_PLUGIN_TEMPLATE = `import type { Plugin } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
+import { readFileSync } from "fs"
+
+// Store the last user prompt per session for attaching to tool calls
+const sessionPrompts = new Map<string, string>()
 
 export default (async (ctx: any) => {
+  // Get model info (cached for performance)
+  let cachedModel: string | null = null
+  async function getModel(): Promise<string | null> {
+    if (cachedModel) return cachedModel
+    if (ctx?.client?.config?.providers) {
+      try {
+        const configResult = await ctx.client.config.providers()
+        const config = configResult?.data || configResult
+        const activeProvider = config?.connected?.[0]
+        if (activeProvider && config?.default?.[activeProvider]) {
+          const modelId = config.default[activeProvider]
+          const provider = config?.providers?.find((p: any) => p.id === activeProvider)
+          const modelInfo = provider?.models?.[modelId]
+          cachedModel = modelInfo?.name || modelId
+        }
+      } catch {
+        // Ignore config errors
+      }
+    }
+    return cachedModel
+  }
+
   return {
+    // Capture user messages (prompts)
+    "message.updated": async (event: any) => {
+      try {
+        const message = event?.properties?.message
+        if (message?.role === "user" && message?.content) {
+          // Extract text content from message
+          let promptText: string | null = null
+          if (typeof message.content === "string") {
+            promptText = message.content
+          } else if (Array.isArray(message.content)) {
+            const textPart = message.content.find((p: any) => p.type === "text")
+            promptText = textPart?.text || null
+          }
+
+          if (promptText) {
+            // Store prompt for the current session
+            const sessionId = event?.properties?.sessionID || "default"
+            sessionPrompts.set(sessionId, promptText)
+          }
+        }
+      } catch {
+        // Silent failure
+      }
+    },
+
+    // BULLETPROOF: Capture file state BEFORE edit
+    "tool.execute.before": async (input: any) => {
+      // Only capture edit and write tools
+      if (input?.tool !== "edit" && input?.tool !== "write") {
+        return
+      }
+
+      try {
+        const filePath = input?.args?.filePath
+        if (!filePath) return
+
+        // Send checkpoint to agentblame
+        const payload = {
+          tool: input.tool,
+          sessionID: input.sessionID,
+          callID: input.callID,
+          filePath,
+          hook_event: "before",
+        }
+
+        execSync("agentblame capture --provider opencode", {
+          input: JSON.stringify(payload),
+          cwd: ctx?.directory || process.cwd(),
+          stdio: ["pipe", "inherit", "inherit"],
+          timeout: 5000,
+        })
+      } catch {
+        // Silent failure - don't interrupt OpenCode
+      }
+    },
+
+    // Capture tool executions (edits/writes) AFTER completion
     "tool.execute.after": async (input: any, output: any) => {
       // Only capture edit and write tools
       if (input?.tool !== "edit" && input?.tool !== "write") {
@@ -65,30 +152,14 @@ export default (async (ctx: any) => {
       }
 
       try {
-        // Get model info from config
-        let model: string | null = null
-        if (ctx?.client?.config?.providers) {
-          try {
-            const configResult = await ctx.client.config.providers()
-            const config = configResult?.data || configResult
-            const activeProvider = config?.connected?.[0]
-            if (activeProvider && config?.default?.[activeProvider]) {
-              const modelId = config.default[activeProvider]
-              // Try to get display name from provider models
-              const provider = config?.providers?.find((p: any) => p.id === activeProvider)
-              const modelInfo = provider?.models?.[modelId]
-              model = modelInfo?.name || modelId
-            }
-          } catch {
-            // Ignore config errors
-          }
-        }
+        const model = await getModel()
 
         // Build payload based on tool type
         const payload: any = {
           tool: input.tool,
           sessionID: input.sessionID,
           callID: input.callID,
+          hook_event: "after",
         }
 
         if (input.tool === "edit") {
@@ -109,6 +180,13 @@ export default (async (ctx: any) => {
           payload.model = model
         }
 
+        // Attach the last user prompt for this session
+        const sessionId = input.sessionID || "default"
+        const prompt = sessionPrompts.get(sessionId)
+        if (prompt) {
+          payload.prompt = prompt
+        }
+
         // Call agentblame capture with the payload
         execSync("agentblame capture --provider opencode", {
           input: JSON.stringify(payload),
@@ -118,6 +196,18 @@ export default (async (ctx: any) => {
         })
       } catch {
         // Silent failure - don't interrupt OpenCode
+      }
+    },
+
+    // Clean up session prompt cache when session ends
+    "session.deleted": async (event: any) => {
+      try {
+        const sessionId = event?.properties?.sessionID
+        if (sessionId) {
+          sessionPrompts.delete(sessionId)
+        }
+      } catch {
+        // Silent failure
       }
     },
   }
@@ -153,6 +243,19 @@ export async function installCursorHooks(repoRoot: string): Promise<boolean> {
     config.hooks = config.hooks ?? {};
 
     const fileEditCommand = getHookCommand("cursor", "afterFileEdit");
+    const promptCommand = getHookCommand("cursor", "beforeSubmitPrompt");
+
+    // Configure beforeSubmitPrompt to capture user prompts
+    config.hooks.beforeSubmitPrompt = config.hooks.beforeSubmitPrompt ?? [];
+    if (!Array.isArray(config.hooks.beforeSubmitPrompt)) {
+      config.hooks.beforeSubmitPrompt = [];
+    }
+
+    // Remove any existing agentblame hooks first
+    config.hooks.beforeSubmitPrompt = config.hooks.beforeSubmitPrompt.filter(
+      (h: any) => !h?.command?.includes("agentblame") && !h?.command?.includes("capture.ts")
+    );
+    config.hooks.beforeSubmitPrompt.push({ command: promptCommand });
 
     // Configure afterFileEdit
     config.hooks.afterFileEdit = config.hooks.afterFileEdit ?? [];
@@ -191,6 +294,7 @@ export async function installCursorHooks(repoRoot: string): Promise<boolean> {
 
 /**
  * Install the Claude Code hooks at repo-level (.claude/settings.json)
+ * BULLETPROOF: Uses both PreToolUse and PostToolUse for accurate before/after capture
  */
 export async function installClaudeHooks(repoRoot: string): Promise<boolean> {
   if (process.platform === "win32") {
@@ -216,25 +320,42 @@ export async function installClaudeHooks(repoRoot: string): Promise<boolean> {
 
     const hookCommand = getHookCommand("claude");
 
-    // Configure PostToolUse hook for Edit/Write/MultiEdit
+    // Helper to remove existing agentblame hooks
+    const removeAgentblameHooks = (hooks: any[]) =>
+      hooks.filter(
+        (h: any) =>
+          !h?.hooks?.some(
+            (hh: any) =>
+              hh?.command?.includes("agentblame") ||
+              hh?.command?.includes("capture.ts")
+          )
+      );
+
+    // BULLETPROOF: Configure PreToolUse to capture file state BEFORE edit
+    // Only for file-modifying tools (Edit, Write, MultiEdit)
+    // Note: Using separate matchers because regex patterns like (?i) don't work
+    config.hooks.PreToolUse = config.hooks.PreToolUse ?? [];
+    if (!Array.isArray(config.hooks.PreToolUse)) {
+      config.hooks.PreToolUse = [];
+    }
+    config.hooks.PreToolUse = removeAgentblameHooks(config.hooks.PreToolUse);
+    // Add separate matcher for each file-modifying tool
+    for (const toolName of ["Edit", "Write", "MultiEdit"]) {
+      config.hooks.PreToolUse.push({
+        matcher: toolName,
+        hooks: [{ type: "command", command: hookCommand }],
+      });
+    }
+
+    // Configure PostToolUse for ALL tools
+    // This captures file state after edit and read-only tools for analytics
     config.hooks.PostToolUse = config.hooks.PostToolUse ?? [];
     if (!Array.isArray(config.hooks.PostToolUse)) {
       config.hooks.PostToolUse = [];
     }
-
-    // Remove any existing agentblame hooks first
-    config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
-      (h: any) =>
-        !h?.hooks?.some(
-          (hh: any) =>
-            hh?.command?.includes("agentblame") ||
-            hh?.command?.includes("capture.ts")
-        )
-    );
-
-    // Add the new hook with async: true for non-blocking execution
+    config.hooks.PostToolUse = removeAgentblameHooks(config.hooks.PostToolUse);
     config.hooks.PostToolUse.push({
-      matcher: "Edit|Write|MultiEdit",
+      matcher: ".*",
       hooks: [{ type: "command", command: hookCommand, async: true }],
     });
 
@@ -320,7 +441,11 @@ export async function areCursorHooksInstalled(repoRoot: string): Promise<boolean
       (h: any) =>
         h?.command?.includes("agentblame") || h?.command?.includes("capture.ts")
     );
-    return hasFileEdit === true;
+    const hasPrompt = config.hooks?.beforeSubmitPrompt?.some(
+      (h: any) =>
+        h?.command?.includes("agentblame") || h?.command?.includes("capture.ts")
+    );
+    return hasFileEdit === true && hasPrompt === true;
   } catch {
     return false;
   }
@@ -493,6 +618,14 @@ export async function uninstallCursorHooks(repoRoot: string): Promise<boolean> {
       const config = JSON.parse(
         await fs.promises.readFile(hooksPath, "utf8")
       );
+
+      if (config.hooks?.beforeSubmitPrompt) {
+        config.hooks.beforeSubmitPrompt = config.hooks.beforeSubmitPrompt.filter(
+          (h: any) =>
+            !h?.command?.includes("agentblame") &&
+            !h?.command?.includes("capture.ts")
+        );
+      }
 
       if (config.hooks?.afterFileEdit) {
         config.hooks.afterFileEdit = config.hooks.afterFileEdit.filter(

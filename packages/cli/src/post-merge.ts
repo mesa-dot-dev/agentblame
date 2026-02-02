@@ -15,15 +15,14 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
+import { buildNote, parseNote } from "./lib/git/gitNotes";
 import type {
-  GitNotesAttribution,
+  Attribution,
+  SessionMetadata,
   AnalyticsNote,
-  PRHistoryEntry,
-  ProviderBreakdown,
+  AgentBreakdown,
   ModelBreakdown,
-  ContributorStats,
-  AiProvider,
-} from "./lib";
+} from "./lib/types";
 
 // Get environment variables
 const PR_NUMBER = process.env.PR_NUMBER || "";
@@ -33,14 +32,12 @@ const HEAD_SHA = process.env.HEAD_SHA || "";
 const MERGE_SHA = process.env.MERGE_SHA || "";
 const PR_AUTHOR = process.env.PR_AUTHOR || "unknown";
 
-// Analytics notes ref (separate from attribution notes)
+// Notes refs
+const NOTES_REF = "refs/notes/agentblame";
 const ANALYTICS_REF = "refs/notes/agentblame-analytics";
-// We store analytics on the repo's first commit (root)
 const ANALYTICS_ANCHOR = "agentblame-analytics-anchor";
 
 type MergeType = "merge_commit" | "squash" | "rebase";
-
-type NoteAttribution = GitNotesAttribution["attributions"][number];
 
 function run(cmd: string): string {
   try {
@@ -58,7 +55,6 @@ function log(msg: string): void {
  * Detect what type of merge was performed
  */
 function detectMergeType(): MergeType {
-  // Get the merge commit
   const mergeCommit = MERGE_SHA;
   if (!mergeCommit) {
     log("No merge commit SHA, assuming rebase");
@@ -67,16 +63,14 @@ function detectMergeType(): MergeType {
 
   // Check number of parents
   const parents = run(`git rev-list --parents -n 1 ${mergeCommit}`).split(" ");
-  const parentCount = parents.length - 1; // First element is the commit itself
+  const parentCount = parents.length - 1;
 
   if (parentCount > 1) {
-    // Multiple parents = merge commit
     log("Detected: Merge commit (multiple parents)");
     return "merge_commit";
   }
 
   // Single parent - could be squash or rebase
-  // Check if commit message contains PR number (squash pattern)
   const commitMsg = run(`git log -1 --format=%s ${mergeCommit}`);
   if (commitMsg.includes(`#${PR_NUMBER}`) || commitMsg.includes(PR_TITLE)) {
     log("Detected: Squash merge (single commit with PR reference)");
@@ -88,39 +82,37 @@ function detectMergeType(): MergeType {
 }
 
 /**
- * Get all commits that were in the PR (between base and head)
+ * Get all commits that were in the PR
  */
 function getPRCommits(): string[] {
-  // Get commits that were in the feature branch but not in base
   const output = run(`git rev-list ${BASE_SHA}..${HEAD_SHA}`);
   if (!output) return [];
   return output.split("\n").filter(Boolean);
 }
 
 /**
- * Read agentblame note from a commit
+ * Read attribution note from a commit (v3 format)
  */
-function readNote(sha: string): GitNotesAttribution | null {
-  const note = run(`git notes --ref=refs/notes/agentblame show ${sha} 2>/dev/null`);
+function readNote(sha: string): Attribution | null {
+  const note = run(`git notes --ref=${NOTES_REF} show ${sha} 2>/dev/null`);
   if (!note) return null;
-  try {
-    return JSON.parse(note);
-  } catch {
-    return null;
-  }
+  return parseNote(note);
 }
 
 /**
- * Write agentblame note to a commit
+ * Write attribution note to a commit (v3 format)
  */
-function writeNote(sha: string, attribution: GitNotesAttribution): boolean {
-  const noteJson = JSON.stringify(attribution);
+function writeNote(
+  sha: string,
+  attribution: Attribution,
+  sessions: Record<string, SessionMetadata>
+): boolean {
+  const noteContent = buildNote(attribution, sessions);
   try {
-    // Use spawnSync with array args to avoid shell injection
     const result = spawnSync(
       "git",
-      ["notes", "--ref=refs/notes/agentblame", "add", "-f", "-m", noteJson, sha],
-      { encoding: "utf8" },
+      ["notes", `--ref=${NOTES_REF}`, "add", "-f", "-m", noteContent, sha],
+      { encoding: "utf8" }
     );
     if (result.status !== 0) {
       log(`Failed to write note to ${sha}: ${result.stderr}`);
@@ -134,128 +126,36 @@ function writeNote(sha: string, attribution: GitNotesAttribution): boolean {
 }
 
 /**
- * Attribution with its original content for containment matching
+ * Get diff hunks from a commit
  */
-interface AttributionWithContent extends NoteAttribution {
-  originalContent: string;
-}
-
-/**
- * Collect all attributions from PR commits, including original content
- *
- * The contentHash in attributions is the hash of the FIRST line in the range.
- * We need to find that line in the commit's diff to extract the full content.
- */
-function collectPRAttributions(prCommits: string[]): {
-  byHash: Map<string, NoteAttribution[]>;
-  withContent: AttributionWithContent[];
-} {
-  const byHash = new Map<string, NoteAttribution[]>();
-  const withContent: AttributionWithContent[] = [];
-
-  for (const sha of prCommits) {
-    const note = readNote(sha);
-    if (!note?.attributions) continue;
-
-    // Get the commit's diff with per-line hashes
-    const hunks = getCommitHunks(sha);
-
-    // Build a map from per-line contentHash to line data
-    // Also build a map from path+lineNumber to content for range extraction
-    const linesByHash = new Map<string, { path: string; lineNumber: number; content: string }>();
-    const linesByLocation = new Map<string, string>();
-
-    for (const hunk of hunks) {
-      for (const line of hunk.lines) {
-        linesByHash.set(line.contentHash, {
-          path: hunk.path,
-          lineNumber: line.lineNumber,
-          content: line.content,
-        });
-        linesByLocation.set(`${hunk.path}:${line.lineNumber}`, line.content);
-      }
-    }
-
-    for (const attr of note.attributions) {
-      const hash = attr.contentHash;
-      if (!byHash.has(hash)) {
-        byHash.set(hash, []);
-      }
-      byHash.get(hash)?.push(attr);
-
-      // Extract the full content for this attribution range
-      // The contentHash is for the first line; we need to get all lines in the range
-      const rangeLines: string[] = [];
-      for (let lineNum = attr.startLine; lineNum <= attr.endLine; lineNum++) {
-        const lineContent = linesByLocation.get(`${attr.path}:${lineNum}`);
-        if (lineContent !== undefined) {
-          rangeLines.push(lineContent);
-        }
-      }
-
-      if (rangeLines.length > 0) {
-        withContent.push({ ...attr, originalContent: rangeLines.join("\n") });
-      } else {
-        // Fallback: try to find by hash (first line)
-        const lineData = linesByHash.get(hash);
-        if (lineData) {
-          withContent.push({ ...attr, originalContent: lineData.content });
-        }
-      }
-    }
-  }
-
-  return { byHash, withContent };
-}
-
-/**
- * Line-level data from a diff
- */
-interface DiffLine {
-  lineNumber: number;
-  content: string;
-  contentHash: string;
-}
-
-/**
- * Hunk with line-level data
- */
-interface DiffHunk {
+function getCommitHunks(sha: string): Array<{
   path: string;
   startLine: number;
   endLine: number;
-  content: string;
-  contentHash: string;
-  lines: DiffLine[];
-}
-
-/**
- * Get the diff of a commit and extract content with per-line hashes
- * This matches the behavior of lib/git/gitDiff.ts parseDiff()
- */
-function getCommitHunks(sha: string): DiffHunk[] {
+  lines: Array<{ lineNumber: number; content: string }>;
+}> {
   const diff = run(`git diff-tree -p ${sha}`);
   if (!diff) return [];
 
-  const hunks: DiffHunk[] = [];
+  const hunks: Array<{
+    path: string;
+    startLine: number;
+    endLine: number;
+    lines: Array<{ lineNumber: number; content: string }>;
+  }> = [];
 
   let currentFile = "";
   let lineNumber = 0;
-  let hunkLines: DiffLine[] = [];
+  let hunkLines: Array<{ lineNumber: number; content: string }> = [];
   let startLine = 0;
 
   for (const line of diff.split("\n")) {
-    // New file header
     if (line.startsWith("+++ b/")) {
-      // Save previous hunk
       if (hunkLines.length > 0 && currentFile) {
-        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
           endLine: startLine + hunkLines.length - 1,
-          content,
-          contentHash: computeHash(content),
           lines: hunkLines,
         });
         hunkLines = [];
@@ -264,23 +164,17 @@ function getCommitHunks(sha: string): DiffHunk[] {
       continue;
     }
 
-    // Hunk header
     if (line.startsWith("@@")) {
-      // Save previous hunk
       if (hunkLines.length > 0 && currentFile) {
-        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
           endLine: startLine + hunkLines.length - 1,
-          content,
-          contentHash: computeHash(content),
           lines: hunkLines,
         });
         hunkLines = [];
       }
 
-      // Parse line number: @@ -old,count +new,count @@
       const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
       if (match) {
         lineNumber = parseInt(match[1], 10);
@@ -289,32 +183,24 @@ function getCommitHunks(sha: string): DiffHunk[] {
       continue;
     }
 
-    // Added line
     if (line.startsWith("+") && !line.startsWith("+++")) {
       if (hunkLines.length === 0) {
         startLine = lineNumber;
       }
-      const content = line.slice(1);
       hunkLines.push({
         lineNumber,
-        content,
-        contentHash: computeHash(content),
+        content: line.slice(1),
       });
       lineNumber++;
       continue;
     }
 
-    // Context or removed line
     if (!line.startsWith("-")) {
-      // Save previous hunk if we hit a non-added line
       if (hunkLines.length > 0 && currentFile) {
-        const content = hunkLines.map((l) => l.content).join("\n");
         hunks.push({
           path: currentFile,
           startLine,
           endLine: startLine + hunkLines.length - 1,
-          content,
-          contentHash: computeHash(content),
           lines: hunkLines,
         });
         hunkLines = [];
@@ -323,15 +209,11 @@ function getCommitHunks(sha: string): DiffHunk[] {
     }
   }
 
-  // Save last hunk
   if (hunkLines.length > 0 && currentFile) {
-    const content = hunkLines.map((l) => l.content).join("\n");
     hunks.push({
       path: currentFile,
       startLine,
       endLine: startLine + hunkLines.length - 1,
-      content,
-      contentHash: computeHash(content),
       lines: hunkLines,
     });
   }
@@ -340,208 +222,227 @@ function getCommitHunks(sha: string): DiffHunk[] {
 }
 
 /**
- * Compute SHA256 hash of content
+ * Collected data from PR commits
  */
-function computeHash(content: string): string {
-  const crypto = require("node:crypto");
-  return `sha256:${crypto.createHash("sha256").update(content).digest("hex")}`;
+interface PRAttributionData {
+  sessions: Record<string, SessionMetadata>;
+  fileRanges: Map<
+    string,
+    Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>
+  >;
 }
 
 /**
- * Find attributions whose content is contained within the hunk content
- * Returns attributions with calculated precise line numbers
+ * Collect attributions from PR commits
  */
-function findContainedAttributions(
-  hunk: { path: string; startLine: number; content: string },
-  attributions: AttributionWithContent[],
-): NoteAttribution[] {
-  const results: NoteAttribution[] = [];
+function collectPRAttributions(prCommits: string[]): PRAttributionData {
+  const allSessions: Record<string, SessionMetadata> = {};
+  const fileRanges = new Map<
+    string,
+    Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>
+  >();
 
-  for (const attr of attributions) {
-    // Check if file paths match
-    const attrFileName = attr.path.split("/").pop();
-    const hunkFileName = hunk.path.split("/").pop();
-    const sameFile =
-      attrFileName === hunkFileName ||
-      attr.path.endsWith(hunk.path) ||
-      hunk.path.endsWith(attrFileName || "");
+  for (const sha of prCommits) {
+    const note = readNote(sha);
+    if (!note) continue;
 
-    if (!sameFile) continue;
-
-    // Check if AI content is contained in the hunk
-    const aiContent = attr.originalContent.trim();
-    const hunkContent = hunk.content;
-
-    if (!hunkContent.includes(aiContent)) continue;
-
-    // Calculate precise line numbers
-    const offset = hunkContent.indexOf(aiContent);
-    let startLine = hunk.startLine;
-
-    if (offset > 0) {
-      const contentBeforeAI = hunkContent.slice(0, offset);
-      const linesBeforeAI = contentBeforeAI.split("\n").length - 1;
-      startLine = hunk.startLine + linesBeforeAI;
+    // Collect sessions
+    for (const [sessionId, session] of Object.entries(note.sessions)) {
+      if (!allSessions[sessionId]) {
+        allSessions[sessionId] = session;
+      }
     }
 
-    const aiLineCount = aiContent.split("\n").length;
-    const endLine = startLine + aiLineCount - 1;
+    // Get content from the commit diff
+    const hunks = getCommitHunks(sha);
+    const hunksByPath = new Map<string, typeof hunks>();
+    for (const hunk of hunks) {
+      if (!hunksByPath.has(hunk.path)) {
+        hunksByPath.set(hunk.path, []);
+      }
+      hunksByPath.get(hunk.path)!.push(hunk);
+    }
 
-    // Create clean attribution without originalContent
-    const { originalContent: _, ...cleanAttr } = attr;
-    results.push({
-      ...cleanAttr,
-      path: hunk.path,
-      startLine: startLine,
-      endLine: endLine,
-    });
+    // Collect file ranges with content
+    for (const [filePath, fileAttr] of Object.entries(note.files)) {
+      if (!fileRanges.has(filePath)) {
+        fileRanges.set(filePath, new Map());
+      }
+      const sessionMap = fileRanges.get(filePath)!;
 
-    log(
-      `  Contained match: ${hunk.path}:${startLine}-${endLine} (${attr.provider})`,
-    );
+      for (const range of fileAttr.aiRanges) {
+        if (!sessionMap.has(range.sessionId)) {
+          sessionMap.set(range.sessionId, []);
+        }
+
+        // Find content for this range from hunks
+        const fileHunks = hunksByPath.get(filePath) || [];
+        const content: string[] = [];
+
+        for (const hunk of fileHunks) {
+          for (const line of hunk.lines) {
+            if (line.lineNumber >= range.startLine && line.lineNumber <= range.endLine) {
+              content.push(line.content);
+            }
+          }
+        }
+
+        sessionMap.get(range.sessionId)!.push({
+          startLine: range.startLine,
+          endLine: range.endLine,
+          content,
+        });
+      }
+    }
   }
 
-  return results;
+  return { sessions: allSessions, fileRanges };
 }
 
 /**
- * Transfer notes for a squash merge
+ * Find where content appears in a merge commit
+ */
+function findContentMatch(
+  lineMap: Map<number, string>,
+  content: string[]
+): { start: number; end: number } | null {
+  if (content.length === 0) return null;
+
+  const firstLine = content[0];
+  const lineNumbers = Array.from(lineMap.entries())
+    .filter(([_, c]) => c === firstLine)
+    .map(([n]) => n);
+
+  for (const startLine of lineNumbers) {
+    let matches = true;
+    for (let i = 0; i < content.length; i++) {
+      const lineContent = lineMap.get(startLine + i);
+      if (lineContent !== content[i]) {
+        matches = false;
+        break;
+      }
+    }
+
+    if (matches) {
+      return { start: startLine, end: startLine + content.length - 1 };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Match content and build attribution for a merge commit
+ */
+function buildMergeAttribution(
+  mergeSha: string,
+  prData: PRAttributionData
+): { attribution: Attribution; matchCount: number } | null {
+  const mergeHunks = getCommitHunks(mergeSha);
+
+  // Build content index from merge commit
+  const mergeContentIndex = new Map<string, Map<number, string>>();
+  for (const hunk of mergeHunks) {
+    if (!mergeContentIndex.has(hunk.path)) {
+      mergeContentIndex.set(hunk.path, new Map());
+    }
+    const lineMap = mergeContentIndex.get(hunk.path)!;
+    for (const line of hunk.lines) {
+      lineMap.set(line.lineNumber, line.content);
+    }
+  }
+
+  const attribution: Attribution = {
+    version: 3,
+    timestamp: new Date().toISOString(),
+    sessions: prData.sessions,
+    files: {},
+  };
+
+  let matchCount = 0;
+
+  for (const [filePath, sessionRanges] of prData.fileRanges) {
+    // Try to find matching path
+    let targetPath = filePath;
+    if (!mergeContentIndex.has(filePath)) {
+      const matchingPath = Array.from(mergeContentIndex.keys()).find(
+        (p) => p.endsWith(filePath) || filePath.endsWith(p)
+      );
+      if (!matchingPath) continue;
+      targetPath = matchingPath;
+    }
+
+    const targetContent = mergeContentIndex.get(targetPath)!;
+
+    if (!attribution.files[targetPath]) {
+      attribution.files[targetPath] = {
+        aiRanges: [],
+        humanRanges: [],
+      };
+    }
+
+    for (const [sessionId, ranges] of sessionRanges) {
+      for (const range of ranges) {
+        if (range.content.length === 0) continue;
+
+        const matchedLines = findContentMatch(targetContent, range.content);
+
+        if (matchedLines) {
+          attribution.files[targetPath].aiRanges.push({
+            sessionId,
+            startLine: matchedLines.start,
+            endLine: matchedLines.end,
+          });
+          matchCount++;
+          log(`  Matched: ${targetPath}:${matchedLines.start}-${matchedLines.end}`);
+        }
+      }
+    }
+  }
+
+  if (matchCount === 0) {
+    return null;
+  }
+
+  return { attribution, matchCount };
+}
+
+/**
+ * Handle squash merge
  */
 function handleSquashMerge(prCommits: string[]): void {
-  log(
-    `Transferring notes from ${prCommits.length} PR commits to squash commit ${MERGE_SHA}`,
-  );
+  log(`Transferring notes from ${prCommits.length} PR commits to squash commit ${MERGE_SHA}`);
 
-  // Collect all attributions from PR commits
-  const { byHash, withContent } = collectPRAttributions(prCommits);
-  if (byHash.size === 0) {
+  const prData = collectPRAttributions(prCommits);
+
+  if (Object.keys(prData.sessions).length === 0) {
     log("No attributions found in PR commits");
     return;
   }
 
-  log(
-    `Found ${byHash.size} unique content hashes, ${withContent.length} with content`,
-  );
+  log(`Found ${Object.keys(prData.sessions).length} sessions`);
 
-  // Get hunks from the squash commit (with per-line hashes)
-  const hunks = getCommitHunks(MERGE_SHA);
-  log(`Squash commit has ${hunks.length} hunks`);
+  const result = buildMergeAttribution(MERGE_SHA, prData);
 
-  // Build a map of per-line hashes in the squash commit
-  const squashLinesByHash = new Map<string, { path: string; lineNumber: number; content: string }>();
-  for (const hunk of hunks) {
-    for (const line of hunk.lines) {
-      squashLinesByHash.set(line.contentHash, {
-        path: hunk.path,
-        lineNumber: line.lineNumber,
-        content: line.content,
-      });
-    }
-  }
-
-  // Match attributions to squash commit
-  const newAttributions: NoteAttribution[] = [];
-  const matchedContentHashes = new Set<string>();
-
-  // First pass: exact line hash matches
-  for (const [hash, attrs] of byHash) {
-    const squashLine = squashLinesByHash.get(hash);
-    if (squashLine && attrs.length > 0) {
-      const attr = attrs[0];
-      // For now, create single-line attribution
-      // TODO: could try to find consecutive matched lines and merge them
-      newAttributions.push({
-        ...attr,
-        path: squashLine.path,
-        startLine: squashLine.lineNumber,
-        endLine: squashLine.lineNumber,
-      });
-      matchedContentHashes.add(hash);
-      log(
-        `  Line hash match: ${squashLine.path}:${squashLine.lineNumber} (${attr.provider})`,
-      );
-    }
-  }
-
-  // Second pass: containment matching for multi-line attributions
-  for (const hunk of hunks) {
-    const unmatchedAttrs = withContent.filter(
-      (a) => !matchedContentHashes.has(a.contentHash),
-    );
-    if (unmatchedAttrs.length === 0) continue;
-
-    const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
-    for (const match of containedMatches) {
-      newAttributions.push(match);
-      matchedContentHashes.add(match.contentHash);
-    }
-  }
-
-  if (newAttributions.length === 0) {
+  if (!result) {
     log("No attributions matched to squash commit");
     return;
   }
 
-  // Merge consecutive attributions with same provider
-  const mergedAttributions = mergeConsecutiveAttributions(newAttributions);
-
-  // Write note to squash commit
-  const note: GitNotesAttribution = {
-    version: 2,
-    timestamp: new Date().toISOString(),
-    attributions: mergedAttributions,
-  };
-
-  if (writeNote(MERGE_SHA, note)) {
-    log(`✓ Attached ${mergedAttributions.length} attribution(s) to squash commit`);
+  if (writeNote(MERGE_SHA, result.attribution, prData.sessions)) {
+    log(`✓ Attached ${result.matchCount} attribution range(s) to squash commit`);
   }
 }
 
 /**
- * Merge consecutive attributions with the same provider into ranges
- */
-function mergeConsecutiveAttributions(attrs: NoteAttribution[]): NoteAttribution[] {
-  if (attrs.length === 0) return [];
-
-  // Sort by path, then by startLine
-  const sorted = [...attrs].sort((a, b) => {
-    if (a.path !== b.path) return a.path.localeCompare(b.path);
-    return a.startLine - b.startLine;
-  });
-
-  const merged: NoteAttribution[] = [];
-  let current = { ...sorted[0] };
-
-  for (let i = 1; i < sorted.length; i++) {
-    const next = sorted[i];
-    // Check if consecutive and same provider
-    if (
-      current.path === next.path &&
-      current.endLine >= next.startLine - 1 &&
-      current.provider === next.provider
-    ) {
-      // Merge: extend the range
-      current.endLine = Math.max(current.endLine, next.endLine);
-      current.confidence = Math.min(current.confidence, next.confidence);
-    } else {
-      merged.push(current);
-      current = { ...next };
-    }
-  }
-  merged.push(current);
-
-  return merged;
-}
-
-/**
- * Transfer notes for a rebase merge
+ * Handle rebase merge
  */
 function handleRebaseMerge(prCommits: string[]): void {
   log(`Handling rebase merge: ${prCommits.length} original commits`);
 
-  // Collect all attributions from PR commits
-  const { byHash, withContent } = collectPRAttributions(prCommits);
-  if (byHash.size === 0) {
+  const prData = collectPRAttributions(prCommits);
+
+  if (Object.keys(prData.sessions).length === 0) {
     log("No attributions found in PR commits");
     return;
   }
@@ -550,83 +451,31 @@ function handleRebaseMerge(prCommits: string[]): void {
   const newCommits = run(`git rev-list ${BASE_SHA}..HEAD`)
     .split("\n")
     .filter(Boolean);
+
   log(`Found ${newCommits.length} new commits after rebase`);
 
   let totalTransferred = 0;
 
   for (const newSha of newCommits) {
-    const hunks = getCommitHunks(newSha);
-    const newAttributions: NoteAttribution[] = [];
-    const matchedContentHashes = new Set<string>();
+    const result = buildMergeAttribution(newSha, prData);
 
-    // Build a map of per-line hashes for this commit
-    const linesByHash = new Map<string, { path: string; lineNumber: number }>();
-    for (const hunk of hunks) {
-      for (const line of hunk.lines) {
-        linesByHash.set(line.contentHash, {
-          path: hunk.path,
-          lineNumber: line.lineNumber,
-        });
-      }
-    }
-
-    // First pass: exact line hash matches
-    for (const [hash, attrs] of byHash) {
-      const lineInfo = linesByHash.get(hash);
-      if (lineInfo && attrs.length > 0) {
-        const attr = attrs[0];
-        newAttributions.push({
-          ...attr,
-          path: lineInfo.path,
-          startLine: lineInfo.lineNumber,
-          endLine: lineInfo.lineNumber,
-        });
-        matchedContentHashes.add(hash);
-      }
-    }
-
-    // Second pass: containment matching
-    for (const hunk of hunks) {
-      const unmatchedAttrs = withContent.filter(
-        (a) => !matchedContentHashes.has(a.contentHash),
-      );
-      if (unmatchedAttrs.length === 0) continue;
-
-      const containedMatches = findContainedAttributions(hunk, unmatchedAttrs);
-      for (const match of containedMatches) {
-        newAttributions.push(match);
-        matchedContentHashes.add(match.contentHash);
-      }
-    }
-
-    if (newAttributions.length > 0) {
-      // Merge consecutive attributions
-      const merged = mergeConsecutiveAttributions(newAttributions);
-      const note: GitNotesAttribution = {
-        version: 2,
-        timestamp: new Date().toISOString(),
-        attributions: merged,
-      };
-      if (writeNote(newSha, note)) {
-        log(
-          `  ✓ ${newSha.slice(0, 7)}: ${merged.length} attribution(s)`,
-        );
-        totalTransferred += merged.length;
+    if (result && result.matchCount > 0) {
+      if (writeNote(newSha, result.attribution, prData.sessions)) {
+        log(`  ✓ ${newSha.slice(0, 7)}: ${result.matchCount} range(s)`);
+        totalTransferred += result.matchCount;
       }
     }
   }
 
-  log(
-    `✓ Transferred ${totalTransferred} attribution(s) across ${newCommits.length} commits`,
-  );
+  log(`✓ Transferred ${totalTransferred} range(s) across ${newCommits.length} commits`);
 }
 
 // =============================================================================
-// Analytics Aggregation
+// Analytics
 // =============================================================================
 
 /**
- * Get the root commit SHA (first commit in repo)
+ * Get the root commit SHA
  */
 function getRootCommit(): string {
   return run("git rev-list --max-parents=0 HEAD").split("\n")[0] || "";
@@ -634,27 +483,22 @@ function getRootCommit(): string {
 
 /**
  * Get or create the analytics anchor tag
- * Returns the SHA the tag points to (root commit)
  */
 function getOrCreateAnalyticsAnchor(): string {
-  // Check if tag exists
   const existingTag = run(`git rev-parse ${ANALYTICS_ANCHOR} 2>/dev/null`);
   if (existingTag) {
     return existingTag;
   }
 
-  // Create tag on root commit
   const rootSha = getRootCommit();
   if (!rootSha) {
     log("Warning: Could not find root commit for analytics anchor");
     return "";
   }
 
-  const result = spawnSync(
-    "git",
-    ["tag", ANALYTICS_ANCHOR, rootSha],
-    { encoding: "utf8" },
-  );
+  const result = spawnSync("git", ["tag", ANALYTICS_ANCHOR, rootSha], {
+    encoding: "utf8",
+  });
 
   if (result.status !== 0) {
     log(`Warning: Could not create analytics anchor tag: ${result.stderr}`);
@@ -672,17 +516,11 @@ function readAnalyticsNote(): AnalyticsNote | null {
   const anchorSha = getOrCreateAnalyticsAnchor();
   if (!anchorSha) return null;
 
-  const note = run(
-    `git notes --ref=${ANALYTICS_REF} show ${anchorSha} 2>/dev/null`,
-  );
+  const note = run(`git notes --ref=${ANALYTICS_REF} show ${anchorSha} 2>/dev/null`);
   if (!note) return null;
 
   try {
-    const parsed = JSON.parse(note);
-    if (parsed.version === 2) {
-      return parsed as AnalyticsNote;
-    }
-    return null;
+    return JSON.parse(note) as AnalyticsNote;
   } catch {
     return null;
   }
@@ -699,7 +537,7 @@ function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
   const result = spawnSync(
     "git",
     ["notes", `--ref=${ANALYTICS_REF}`, "add", "-f", "-m", noteJson, anchorSha],
-    { encoding: "utf8" },
+    { encoding: "utf8" }
   );
 
   if (result.status !== 0) {
@@ -711,8 +549,7 @@ function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
 }
 
 /**
- * Get PR diff stats (additions/deletions)
- * Only counts non-empty lines to match how attributions are counted
+ * Get PR diff stats
  */
 function getPRDiffStats(): { additions: number; deletions: number } {
   const diff = run(`git diff ${BASE_SHA}..${MERGE_SHA || "HEAD"}`);
@@ -722,19 +559,12 @@ function getPRDiffStats(): { additions: number; deletions: number } {
   let deletions = 0;
 
   for (const line of diff.split("\n")) {
-    // Added line (but not diff header)
     if (line.startsWith("+") && !line.startsWith("+++")) {
       const content = line.slice(1).trim();
-      if (content !== "") {
-        additions++;
-      }
-    }
-    // Deleted line (but not diff header)
-    else if (line.startsWith("-") && !line.startsWith("---")) {
+      if (content !== "") additions++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
       const content = line.slice(1).trim();
-      if (content !== "") {
-        deletions++;
-      }
+      if (content !== "") deletions++;
     }
   }
 
@@ -742,46 +572,59 @@ function getPRDiffStats(): { additions: number; deletions: number } {
 }
 
 /**
- * Aggregate PR statistics from attribution notes
+ * Compute stats from collected attributions
  */
-function aggregatePRStats(
-  attributions: NoteAttribution[],
-): {
+function computePRStats(prData: PRAttributionData): {
   aiLines: number;
-  byProvider: ProviderBreakdown;
+  prompts: number;
+  byAgent: AgentBreakdown;
   byModel: ModelBreakdown;
 } {
   let aiLines = 0;
-  const byProvider: ProviderBreakdown = {};
+  let prompts = 0;
+  const byAgent: AgentBreakdown = {};
   const byModel: ModelBreakdown = {};
+  const countedSessions = new Set<string>();
 
-  for (const attr of attributions) {
-    const lineCount = attr.endLine - attr.startLine + 1;
-    aiLines += lineCount;
+  for (const [_, sessionRanges] of prData.fileRanges) {
+    for (const [sessionId, ranges] of sessionRanges) {
+      const session = prData.sessions[sessionId];
+      if (!session) continue;
 
-    // Aggregate by provider
-    const provider = attr.provider as AiProvider;
-    byProvider[provider] = (byProvider[provider] || 0) + lineCount;
+      for (const range of ranges) {
+        const lineCount = range.endLine - range.startLine + 1;
+        aiLines += lineCount;
 
-    // Aggregate by model
-    if (attr.model) {
-      byModel[attr.model] = (byModel[attr.model] || 0) + lineCount;
+        // Agent breakdown
+        const agent = session.agent;
+        if (agent === "cursor" || agent === "claude" || agent === "opencode") {
+          byAgent[agent] = (byAgent[agent] || 0) + lineCount;
+        }
+
+        // Model breakdown
+        if (session.model) {
+          byModel[session.model] = (byModel[session.model] || 0) + lineCount;
+        }
+      }
+
+      // Count prompts from session metadata (only once per session)
+      if (!countedSessions.has(sessionId) && session.prompts) {
+        prompts += session.prompts.length;
+        countedSessions.add(sessionId);
+      }
     }
   }
 
-  return { aiLines, byProvider, byModel };
+  return { aiLines, prompts, byAgent, byModel };
 }
 
 /**
- * Merge provider breakdowns
+ * Merge agent breakdowns
  */
-function mergeProviders(
-  a: ProviderBreakdown,
-  b: ProviderBreakdown,
-): ProviderBreakdown {
-  const result: ProviderBreakdown = { ...a };
+function mergeAgents(a: AgentBreakdown, b: AgentBreakdown): AgentBreakdown {
+  const result: AgentBreakdown = { ...a };
   for (const [key, value] of Object.entries(b)) {
-    const k = key as keyof ProviderBreakdown;
+    const k = key as keyof AgentBreakdown;
     result[k] = (result[k] || 0) + (value || 0);
   }
   return result;
@@ -799,126 +642,272 @@ function mergeModels(a: ModelBreakdown, b: ModelBreakdown): ModelBreakdown {
 }
 
 /**
- * Update analytics with current PR data
+ * Update analytics with PR data
  */
 function updateAnalytics(
   existing: AnalyticsNote | null,
-  prAttributions: NoteAttribution[],
+  prData: PRAttributionData
 ): AnalyticsNote {
-  const prStats = aggregatePRStats(prAttributions);
+  const prStats = computePRStats(prData);
   const diffStats = getPRDiffStats();
   const now = new Date().toISOString();
-  const today = now.split("T")[0];
 
-  // Create history entry for this PR
-  const historyEntry: PRHistoryEntry = {
-    date: today,
-    pr: parseInt(PR_NUMBER, 10) || 0,
-    title: PR_TITLE.slice(0, 100), // Truncate long titles
+  // Determine if this PR was tracked (has session data)
+  const isTracked = Object.keys(prData.sessions).length > 0;
+
+  // If tracked: we know AI vs Human
+  // If untracked: all lines are unknown
+  const aiLines = prStats.aiLines;
+  const humanLines = isTracked ? diffStats.additions - prStats.aiLines : 0;
+  const unknownLines = isTracked ? 0 : diffStats.additions;
+
+  // Create PR entry
+  const prEntry = {
+    number: parseInt(PR_NUMBER, 10) || 0,
+    title: PR_TITLE.slice(0, 100),
     author: PR_AUTHOR,
-    added: diffStats.additions,
-    removed: diffStats.deletions,
-    aiLines: prStats.aiLines,
-    providers: Object.keys(prStats.byProvider).length > 0 ? prStats.byProvider : undefined,
-    models: Object.keys(prStats.byModel).length > 0 ? prStats.byModel : undefined,
+    aiLines,
+    humanLines,
+    unknownLines,
+    prompts: prStats.prompts,
+    mergedAt: now,
   };
 
   if (existing) {
-    // Update existing analytics
-    const newSummary = {
-      totalLines: existing.summary.totalLines + diffStats.additions,
-      aiLines: existing.summary.aiLines + prStats.aiLines,
-      humanLines:
-        existing.summary.humanLines +
-        (diffStats.additions - prStats.aiLines),
-      providers: mergeProviders(
-        existing.summary.providers,
-        prStats.byProvider,
-      ),
-      models: mergeModels(existing.summary.models, prStats.byModel),
-      updated: now,
-    };
+    // Update existing
+    existing.summary.aiLines += aiLines;
+    existing.summary.humanLines += humanLines;
+    existing.summary.unknownLines = (existing.summary.unknownLines || 0) + unknownLines;
+    existing.summary.totalLines = existing.summary.aiLines + existing.summary.humanLines + existing.summary.unknownLines;
+    existing.summary.prompts = (existing.summary.prompts || 0) + prStats.prompts;
+    existing.summary.byAgent = mergeAgents(existing.summary.byAgent, prStats.byAgent);
+    existing.summary.byModel = mergeModels(existing.summary.byModel, prStats.byModel);
 
-    // Update contributor stats
-    const contributors = { ...existing.contributors };
-    if (!contributors[PR_AUTHOR]) {
-      contributors[PR_AUTHOR] = {
-        totalLines: 0,
+    // Update contributor
+    if (!existing.contributors[PR_AUTHOR]) {
+      existing.contributors[PR_AUTHOR] = {
+        commits: 0,
+        prs: 0,
+        prompts: 0,
         aiLines: 0,
-        providers: {},
-        models: {},
-        prCount: 0,
+        humanLines: 0,
+        unknownLines: 0,
+        topModels: [],
       };
     }
-    const authorStats = contributors[PR_AUTHOR];
-    authorStats.totalLines += diffStats.additions;
-    authorStats.aiLines += prStats.aiLines;
-    authorStats.providers = mergeProviders(
-      authorStats.providers,
-      prStats.byProvider,
-    );
-    authorStats.models = mergeModels(authorStats.models, prStats.byModel);
-    authorStats.prCount += 1;
+    const contributor = existing.contributors[PR_AUTHOR];
+    contributor.commits += 1;
+    contributor.prs = (contributor.prs || 0) + 1;
+    contributor.prompts = (contributor.prompts || 0) + prStats.prompts;
+    contributor.aiLines += aiLines;
+    contributor.humanLines += humanLines;
+    contributor.unknownLines = (contributor.unknownLines || 0) + unknownLines;
 
-    // Add to history (keep last 100 PRs)
-    const history = [historyEntry, ...existing.history].slice(0, 100);
+    // Update top models
+    const modelCounts = new Map<string, number>();
+    for (const model of contributor.topModels) {
+      modelCounts.set(model, (modelCounts.get(model) || 0) + 1);
+    }
+    for (const [model, count] of Object.entries(prStats.byModel)) {
+      modelCounts.set(model, (modelCounts.get(model) || 0) + count);
+    }
+    contributor.topModels = Array.from(modelCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([model]) => model);
 
-    return {
-      version: 2,
-      summary: newSummary,
-      contributors,
-      history,
-    };
+    // Add PR to recent list
+    if (!existing.recentPRs) {
+      existing.recentPRs = [];
+    }
+    existing.recentPRs.unshift(prEntry);
+    if (existing.recentPRs.length > 100) {
+      existing.recentPRs = existing.recentPRs.slice(0, 100);
+    }
+
+    // Update time series
+    const hour = now.slice(0, 13); // YYYY-MM-DDTHH
+    const date = now.slice(0, 10); // YYYY-MM-DD
+
+    if (!existing.timeSeries) {
+      existing.timeSeries = { hourly: [], daily: [] };
+    }
+
+    // Update or add hourly data point
+    const existingHourly = existing.timeSeries.hourly.find(h => h.hour === hour);
+    if (existingHourly) {
+      existingHourly.aiLines += aiLines;
+      existingHourly.humanLines += humanLines;
+      existingHourly.unknownLines = (existingHourly.unknownLines || 0) + unknownLines;
+      existingHourly.prompts = (existingHourly.prompts || 0) + prStats.prompts;
+      existingHourly.commits += 1;
+      for (const [agent, count] of Object.entries(prStats.byAgent)) {
+        if (count !== undefined) {
+          existingHourly.byAgent[agent] = (existingHourly.byAgent[agent] || 0) + count;
+        }
+      }
+      for (const [model, count] of Object.entries(prStats.byModel)) {
+        if (count !== undefined) {
+          existingHourly.byModel[model] = (existingHourly.byModel[model] || 0) + count;
+        }
+      }
+    } else {
+      existing.timeSeries.hourly.unshift({
+        hour,
+        aiLines,
+        humanLines,
+        unknownLines,
+        prompts: prStats.prompts,
+        byAgent: { ...prStats.byAgent },
+        byModel: { ...prStats.byModel },
+        commits: 1,
+      });
+      // Keep only last 72 hours
+      if (existing.timeSeries.hourly.length > 72) {
+        existing.timeSeries.hourly = existing.timeSeries.hourly.slice(0, 72);
+      }
+    }
+
+    // Update or add daily data point
+    const existingDaily = existing.timeSeries.daily.find(d => d.date === date);
+    if (existingDaily) {
+      existingDaily.aiLines += aiLines;
+      existingDaily.humanLines += humanLines;
+      existingDaily.unknownLines = (existingDaily.unknownLines || 0) + unknownLines;
+      existingDaily.prompts = (existingDaily.prompts || 0) + prStats.prompts;
+      existingDaily.commits += 1;
+      for (const [agent, count] of Object.entries(prStats.byAgent)) {
+        if (count !== undefined) {
+          existingDaily.byAgent[agent] = (existingDaily.byAgent[agent] || 0) + count;
+        }
+      }
+      for (const [model, count] of Object.entries(prStats.byModel)) {
+        if (count !== undefined) {
+          existingDaily.byModel[model] = (existingDaily.byModel[model] || 0) + count;
+        }
+      }
+    } else {
+      existing.timeSeries.daily.unshift({
+        date,
+        aiLines,
+        humanLines,
+        unknownLines,
+        prompts: prStats.prompts,
+        byAgent: { ...prStats.byAgent },
+        byModel: { ...prStats.byModel },
+        commits: 1,
+      });
+      // Keep only last 30 days
+      if (existing.timeSeries.daily.length > 30) {
+        existing.timeSeries.daily = existing.timeSeries.daily.slice(0, 30);
+      }
+    }
+
+    existing.updated = now;
+    return existing;
   }
 
-  // Create new analytics
-  const contributors: Record<string, ContributorStats> = {
-    [PR_AUTHOR]: {
-      totalLines: diffStats.additions,
-      aiLines: prStats.aiLines,
-      providers: prStats.byProvider,
-      models: prStats.byModel,
-      prCount: 1,
-    },
+  // Create time series data point
+  const hour = now.slice(0, 13); // YYYY-MM-DDTHH
+  const date = now.slice(0, 10); // YYYY-MM-DD
+
+  const hourlyDataPoint = {
+    hour,
+    aiLines,
+    humanLines,
+    unknownLines,
+    prompts: prStats.prompts,
+    byAgent: prStats.byAgent,
+    byModel: prStats.byModel,
+    commits: 1,
   };
 
+  const dailyDataPoint = {
+    date,
+    aiLines,
+    humanLines,
+    unknownLines,
+    prompts: prStats.prompts,
+    byAgent: prStats.byAgent,
+    byModel: prStats.byModel,
+    commits: 1,
+  };
+
+  // Create new analytics
   return {
-    version: 2,
+    v: 3,
+    updated: now,
     summary: {
       totalLines: diffStats.additions,
-      aiLines: prStats.aiLines,
-      humanLines: diffStats.additions - prStats.aiLines,
-      providers: prStats.byProvider,
-      models: prStats.byModel,
-      updated: now,
+      aiLines,
+      humanLines,
+      unknownLines,
+      prompts: prStats.prompts,
+      byAgent: prStats.byAgent,
+      byModel: prStats.byModel,
     },
-    contributors,
-    history: [historyEntry],
+    contributors: {
+      [PR_AUTHOR]: {
+        commits: 1,
+        prs: 1,
+        prompts: prStats.prompts,
+        aiLines,
+        humanLines,
+        unknownLines,
+        topModels: Object.keys(prStats.byModel).slice(0, 3),
+      },
+    },
+    recentPRs: [prEntry],
+    timeSeries: {
+      hourly: [hourlyDataPoint],
+      daily: [dailyDataPoint],
+    },
   };
 }
 
 /**
- * Collect all attributions from the merge result
+ * Collect attributions from merge result
  */
-function collectMergeAttributions(mergeType: MergeType): NoteAttribution[] {
+function collectMergeAttributions(mergeType: MergeType): PRAttributionData {
   if (mergeType === "merge_commit") {
     // For merge commits, notes survive on original commits
-    // Collect from all PR commits
     const prCommits = getPRCommits();
-    const allAttributions: NoteAttribution[] = [];
-    for (const sha of prCommits) {
-      const note = readNote(sha);
-      if (note?.attributions) {
-        allAttributions.push(...note.attributions);
-      }
-    }
-    return allAttributions;
+    return collectPRAttributions(prCommits);
   }
 
-  // For squash/rebase, read from the merge commit(s)
   if (mergeType === "squash" && MERGE_SHA) {
     const note = readNote(MERGE_SHA);
-    return note?.attributions || [];
+    if (!note) {
+      return { sessions: {}, fileRanges: new Map() };
+    }
+
+    // Convert note back to PRAttributionData format
+    const fileRanges = new Map<
+      string,
+      Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>
+    >();
+
+    for (const [filePath, fileAttr] of Object.entries(note.files)) {
+      const sessionMap = new Map<
+        string,
+        Array<{ startLine: number; endLine: number; content: string[] }>
+      >();
+
+      for (const range of fileAttr.aiRanges) {
+        if (!sessionMap.has(range.sessionId)) {
+          sessionMap.set(range.sessionId, []);
+        }
+        sessionMap.get(range.sessionId)!.push({
+          startLine: range.startLine,
+          endLine: range.endLine,
+          content: [], // Content not needed for analytics
+        });
+      }
+
+      fileRanges.set(filePath, sessionMap);
+    }
+
+    return { sessions: note.sessions, fileRanges };
   }
 
   if (mergeType === "rebase") {
@@ -926,17 +915,48 @@ function collectMergeAttributions(mergeType: MergeType): NoteAttribution[] {
     const newCommits = run(`git rev-list ${BASE_SHA}..HEAD`)
       .split("\n")
       .filter(Boolean);
-    const allAttributions: NoteAttribution[] = [];
+
+    const allSessions: Record<string, SessionMetadata> = {};
+    const fileRanges = new Map<
+      string,
+      Map<string, Array<{ startLine: number; endLine: number; content: string[] }>>
+    >();
+
     for (const sha of newCommits) {
       const note = readNote(sha);
-      if (note?.attributions) {
-        allAttributions.push(...note.attributions);
+      if (!note) continue;
+
+      // Merge sessions
+      for (const [sessionId, session] of Object.entries(note.sessions)) {
+        if (!allSessions[sessionId]) {
+          allSessions[sessionId] = session;
+        }
+      }
+
+      // Merge file ranges
+      for (const [filePath, fileAttr] of Object.entries(note.files)) {
+        if (!fileRanges.has(filePath)) {
+          fileRanges.set(filePath, new Map());
+        }
+        const sessionMap = fileRanges.get(filePath)!;
+
+        for (const range of fileAttr.aiRanges) {
+          if (!sessionMap.has(range.sessionId)) {
+            sessionMap.set(range.sessionId, []);
+          }
+          sessionMap.get(range.sessionId)!.push({
+            startLine: range.startLine,
+            endLine: range.endLine,
+            content: [],
+          });
+        }
       }
     }
-    return allAttributions;
+
+    return { sessions: allSessions, fileRanges };
   }
 
-  return [];
+  return { sessions: {}, fileRanges: new Map() };
 }
 
 /**
@@ -945,28 +965,31 @@ function collectMergeAttributions(mergeType: MergeType): NoteAttribution[] {
 function updateRepositoryAnalytics(mergeType: MergeType): void {
   log("Updating repository analytics...");
 
-  // Collect all attributions from this PR
-  const attributions = collectMergeAttributions(mergeType);
-  log(`Collected ${attributions.length} attributions from PR`);
+  const prData = collectMergeAttributions(mergeType);
+  log(`Collected ${Object.keys(prData.sessions).length} sessions from PR`);
 
-  // Read existing analytics
-  const existing = readAnalyticsNote();
+  let existing = readAnalyticsNote();
+
+  // Check if existing analytics is v2 format (incompatible) - if so, start fresh
+  if (existing && (!existing.v || existing.v < 3)) {
+    log("Found v2 analytics, migrating to v3 format...");
+    existing = null; // Start fresh with v3
+  }
+
   if (existing) {
-    log(
-      `Found existing analytics: ${existing.history.length} PRs, ${existing.summary.totalLines} total lines`,
-    );
+    const prCount = existing.recentPRs?.length || 0;
+    log(`Found existing analytics: ${prCount} PRs, ${existing.summary?.totalLines || 0} total lines`);
   } else {
     log("No existing analytics found, creating new");
   }
 
-  // Update analytics
-  const updated = updateAnalytics(existing, attributions);
+  const updated = updateAnalytics(existing, prData);
 
-  // Write updated analytics
   if (writeAnalyticsNote(updated)) {
-    log(
-      `✓ Updated analytics: ${updated.summary.aiLines}/${updated.summary.totalLines} AI lines (${Math.round((updated.summary.aiLines / updated.summary.totalLines) * 100)}%)`,
-    );
+    const pct = updated.summary.totalLines > 0
+      ? Math.round((updated.summary.aiLines / updated.summary.totalLines) * 100)
+      : 0;
+    log(`✓ Updated analytics: ${updated.summary.aiLines}/${updated.summary.totalLines} AI lines (${pct}%)`);
   }
 }
 
@@ -976,16 +999,13 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
 async function main(): Promise<void> {
   log("Agent Blame - Transfer Notes");
   log(`PR #${PR_NUMBER}: ${PR_TITLE}`);
-  log(
-    `Base: ${BASE_SHA.slice(0, 7)}, Head: ${HEAD_SHA.slice(0, 7)}, Merge: ${MERGE_SHA.slice(0, 7)}`,
-  );
+  log(`Base: ${BASE_SHA.slice(0, 7)}, Head: ${HEAD_SHA.slice(0, 7)}, Merge: ${MERGE_SHA.slice(0, 7)}`);
 
   // Detect merge type
   const mergeType = detectMergeType();
 
   if (mergeType === "merge_commit") {
     log("Merge commit detected - notes survive automatically on original commits");
-    // Still update analytics for merge commits
     updateRepositoryAnalytics(mergeType);
     log("Done");
     return;
@@ -1006,7 +1026,7 @@ async function main(): Promise<void> {
     handleRebaseMerge(prCommits);
   }
 
-  // Update repository analytics (runs for all merge types)
+  // Update repository analytics
   updateRepositoryAnalytics(mergeType);
 
   log("Done");

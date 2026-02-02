@@ -1,29 +1,47 @@
 /**
- * Process Command
+ * Process Command v3
  *
- * Match a commit against pending AI edits and attach git notes.
+ * Process a commit using delta-based attribution.
+ * Replays deltas to compute AI vs human attributions and writes git notes.
  */
 
 import {
   getRepoRoot,
   runGit,
-  getCommitHunks,
-  getCommitMoves,
-  buildMoveIndex,
-  attachNote,
-  fetchNotesQuiet,
-  getAgentBlameDirForRepo,
-  type RangeAttribution,
-  type LineAttribution,
-  type MatchResult,
-} from "./lib";
+} from "./lib/git/gitCli";
+import { getCommitDiff, parseDiff } from "./lib/git/gitDiff";
+import { attachNote, fetchNotesQuiet } from "./lib/git/gitNotes";
 import {
-  findLineMatch,
-  markEditsAsMatched,
-  findEditsByFile,
-  getEditLines,
-  setAgentBlameDir,
+  setDatabasePath,
+  getSession,
+  getConcatenatedPromptsForSession,
+  getPromptsWithToolCounts,
+  updateSessionFirstCommit,
 } from "./lib/database";
+import {
+  getParentCommit,
+  getDatabasePath,
+  cleanupWorkingDir,
+} from "./lib/storage";
+import {
+  aggregateToRanges,
+  separateRanges,
+  buildSessionMap,
+  buildHumanMap,
+} from "./lib/trace";
+import { updateAnalytics, computeCommitStats } from "./lib/analytics";
+import {
+  getFilesWithDeltas,
+  clearDeltas,
+} from "./lib/delta";
+import {
+  computeFileAttributions,
+} from "./lib/attribution";
+import type {
+  Attribution,
+  SessionMetadata,
+  ProcessResult,
+} from "./lib/types";
 
 // Terminal colors
 const c = {
@@ -33,193 +51,190 @@ const c = {
   cyan: "\x1b[36m",
   yellow: "\x1b[33m",
   green: "\x1b[32m",
-  orange: "\x1b[38;2;184;101;64m", // Soft Mesa Orange #b86540
+  orange: "\x1b[38;2;184;101;64m",
   blue: "\x1b[34m",
 };
 
 /**
- * Find a match for an original location (before move)
- * Used for move detection - checks if the original location had AI-attributed code
- */
-function findMatchForOriginalLocation(
-  originalPath: string
-): { editId: number; provider: string; model: string | null } | null {
-  // Find edits that match the original file
-  const edits = findEditsByFile(originalPath);
-
-  for (const edit of edits) {
-    const lines = getEditLines(edit.id);
-    if (lines.length > 0) {
-      return {
-        editId: edit.id,
-        provider: edit.provider,
-        model: edit.model,
-      };
-    }
-  }
-
-  return null;
-}
-
-/**
- * Merge consecutive lines with the same attribution into ranges
- */
-function mergeConsecutiveLines(lines: LineAttribution[]): RangeAttribution[] {
-  if (lines.length === 0) return [];
-
-  const sorted = [...lines].sort((a, b) => {
-    if (a.path !== b.path) return a.path.localeCompare(b.path);
-    return a.line - b.line;
-  });
-
-  const ranges: RangeAttribution[] = [];
-  let currentRange: RangeAttribution | null = null;
-
-  for (const line of sorted) {
-    if (
-      currentRange &&
-      currentRange.path === line.path &&
-      currentRange.endLine === line.line - 1 &&
-      currentRange.provider === line.provider &&
-      currentRange.matchType === line.matchType
-    ) {
-      currentRange.endLine = line.line;
-      currentRange.confidence = Math.min(currentRange.confidence, line.confidence);
-    } else {
-      if (currentRange) {
-        ranges.push(currentRange);
-      }
-      currentRange = {
-        path: line.path,
-        startLine: line.line,
-        endLine: line.line,
-        provider: line.provider,
-        model: line.model,
-        confidence: line.confidence,
-        matchType: line.matchType,
-        contentHash: line.contentHash,
-      };
-    }
-  }
-
-  if (currentRange) {
-    ranges.push(currentRange);
-  }
-
-  return ranges;
-}
-
-/**
- * Match a commit's lines against pending AI edits
- */
-async function matchCommit(
-  repoRoot: string,
-  sha: string
-): Promise<MatchResult> {
-  const hunks = await getCommitHunks(repoRoot, sha);
-  const moves = await getCommitMoves(repoRoot, sha);
-  const moveIndex = buildMoveIndex(moves);
-
-  const lineAttributions: LineAttribution[] = [];
-  const matchedEditIds = new Set<number>();
-  let totalLines = 0;
-  let unmatchedLines = 0;
-
-  for (const hunk of hunks) {
-    for (const line of hunk.lines) {
-      // Skip empty lines (whitespace-only) from counting
-      if (line.content.trim() === "") {
-        continue;
-      }
-
-      totalLines++;
-
-      // Use SQLite-based matching (O(log n) per lookup via index)
-      let match = findLineMatch(
-        line.content,
-        line.hash,
-        line.hashNormalized,
-        hunk.path
-      );
-
-      // If no direct match, check for moved code
-      if (!match) {
-        const moveKey = `${hunk.path}:${line.lineNumber}`;
-        const moveInfo = moveIndex.get(moveKey);
-
-        if (moveInfo) {
-          const originalMatch = findMatchForOriginalLocation(moveInfo.fromPath);
-
-          if (originalMatch) {
-            lineAttributions.push({
-              path: hunk.path,
-              line: line.lineNumber,
-              provider: originalMatch.provider as "cursor" | "claudeCode",
-              model: originalMatch.model,
-              confidence: 0.85,
-              matchType: "move_detected",
-              contentHash: line.hash,
-            });
-
-            // Track for marking as matched
-            if (originalMatch.editId) {
-              matchedEditIds.add(originalMatch.editId);
-            }
-            continue;
-          }
-        }
-      }
-
-      if (match) {
-        lineAttributions.push({
-          path: hunk.path,
-          line: line.lineNumber,
-          provider: match.edit.provider,
-          model: match.edit.model,
-          confidence: match.confidence,
-          matchType: match.matchType,
-          contentHash: line.hash,
-        });
-
-        // Track edit ID for marking as matched
-        if (match.edit.status !== "matched") {
-          matchedEditIds.add(match.edit.id);
-        }
-      } else {
-        unmatchedLines++;
-      }
-    }
-  }
-
-  // Mark all matched edits in a single transaction
-  if (matchedEditIds.size > 0) {
-    markEditsAsMatched(Array.from(matchedEditIds), sha);
-  }
-
-  const rangeAttributions = mergeConsecutiveLines(lineAttributions);
-
-  return {
-    sha,
-    attributions: rangeAttributions,
-    unmatchedLines,
-    totalLines,
-  };
-}
-
-/**
- * Process a commit - match and attach git note
+ * Process a commit using delta-based attribution
  */
 export async function processCommit(
   repoRoot: string,
-  sha: string
-): Promise<MatchResult> {
-  const result = await matchCommit(repoRoot, sha);
+  commitSha: string
+): Promise<ProcessResult> {
+  // Get parent commit
+  const parentSha = await getParentCommit(repoRoot, commitSha);
 
-  if (result.attributions.length > 0) {
-    await attachNote(repoRoot, sha, result.attributions);
+  // If no parent, this is the initial commit - no attribution possible
+  if (!parentSha) {
+    return {
+      sha: commitSha,
+      filesProcessed: 0,
+      aiLines: 0,
+      humanLines: 0,
+      sessions: [],
+    };
   }
 
-  return result;
+  // Get diff to find modified files and added lines
+  const diff = await getCommitDiff(repoRoot, commitSha);
+  const addedHunks = parseDiff(diff.raw);
+
+  // Build a map of file -> added line numbers for quick lookup
+  const addedLinesMap = new Map<string, Set<number>>();
+  for (const hunk of addedHunks) {
+    if (!addedLinesMap.has(hunk.path)) {
+      addedLinesMap.set(hunk.path, new Set());
+    }
+    for (const line of hunk.lines) {
+      addedLinesMap.get(hunk.path)!.add(line.lineNumber);
+    }
+  }
+
+  // Check if we have any deltas to process
+  const filesWithDeltas = getFilesWithDeltas(repoRoot, parentSha);
+
+  // Track attributions per file (only for added lines)
+  const fileAttributions = new Map<
+    string,
+    Array<{ line: number; sessionId: string | null }>
+  >();
+
+  let totalAiLines = 0;
+  let totalHumanLines = 0;
+  const allSessionIds = new Set<string>();
+
+  for (const file of diff.files || []) {
+    // Skip deleted files
+    if (file.status === "deleted") continue;
+
+    // Get the set of added lines for this file
+    const addedLines = addedLinesMap.get(file.path);
+    if (!addedLines || addedLines.size === 0) {
+      continue;
+    }
+
+    // Compute attributions by replaying deltas
+    const computed = await computeFileAttributions(repoRoot, parentSha, file.path);
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] process ${file.path}:`);
+      console.error(`[agentblame]   addedLines from diff: ${Array.from(addedLines).join(', ')}`);
+      console.error(`[agentblame]   aiRanges: ${computed.aiRanges.map(r => `${r.sessionId?.slice(0,8)}:L${r.startLine}-${r.endLine}`).join(', ')}`);
+    }
+
+    // Build attributions - only for ADDED lines
+    const attrs: Array<{ line: number; sessionId: string | null; promptId?: number | null }> = [];
+
+    for (const lineNum of addedLines) {
+      // Check if this line is in an AI range
+      let sessionId: string | null = null;
+      let promptId: number | null = null;
+      for (const range of computed.aiRanges) {
+        if (lineNum >= range.startLine && lineNum <= range.endLine) {
+          sessionId = range.sessionId;
+          promptId = range.promptId ?? null;
+          allSessionIds.add(sessionId);
+          break;
+        }
+      }
+
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame]   L${lineNum} -> ${sessionId?.slice(0,8) || 'HUMAN'} (prompt: ${promptId})`);
+      }
+
+      attrs.push({ line: lineNum, sessionId, promptId });
+
+      if (sessionId) {
+        totalAiLines++;
+      } else {
+        totalHumanLines++;
+      }
+    }
+
+    fileAttributions.set(file.path, attrs);
+  }
+
+  // Build session map for the note
+  const sessionMap = buildSessionMap(fileAttributions);
+  const humanMap = buildHumanMap(fileAttributions);
+
+  // Build attribution structure
+  const attribution: Attribution = {
+    version: 3,
+    timestamp: new Date().toISOString(),
+    sessions: {},
+    files: {},
+  };
+
+  // Add session metadata
+  const sessions: Record<string, SessionMetadata> = {};
+  for (const sessionId of allSessionIds) {
+    const session = getSession(sessionId);
+    const prompts = getPromptsWithToolCounts(sessionId);
+
+    sessions[sessionId] = {
+      agent: session?.agent || "cursor",
+      model: session?.model || null,
+      prompts: prompts || null,
+      startedAt: session?.createdAt || new Date().toISOString(),
+    };
+
+    // Update session with first commit info
+    updateSessionFirstCommit(sessionId, commitSha);
+  }
+  attribution.sessions = sessions;
+
+  // Build file attributions
+  for (const [filePath, attrs] of fileAttributions) {
+    const ranges = aggregateToRanges(attrs);
+    const { aiRanges, humanRanges } = separateRanges(ranges);
+
+    attribution.files[filePath] = {
+      aiRanges: aiRanges.map((r) => ({
+        sessionId: r.sessionId,
+        promptId: r.promptId,
+        startLine: r.startLine,
+        endLine: r.endLine,
+      })),
+      humanRanges,
+    };
+  }
+
+  // Write git note only if there are AI attributions
+  // Don't overwrite existing notes if we have no AI data
+  if (allSessionIds.size > 0) {
+    await attachNote(repoRoot, commitSha, attribution, sessions);
+  } else if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] No AI sessions found, skipping note write`);
+  }
+
+  // Update analytics
+  const commitStats = computeCommitStats(sessions, attribution.files);
+
+  // Get commit author for analytics
+  const authorResult = await runGit(repoRoot, [
+    "log",
+    "-1",
+    "--format=%ae",
+    commitSha,
+  ]);
+  const commitAuthor =
+    authorResult.exitCode === 0 ? authorResult.stdout.trim() : undefined;
+
+  await updateAnalytics(repoRoot, commitStats, commitAuthor);
+
+  // NOTE: We intentionally do NOT clean up deltas here.
+  // Deltas are cleaned up in capture.ts when a new base SHA is detected.
+  // This allows users to reset and recommit without losing attribution.
+
+  return {
+    sha: commitSha,
+    filesProcessed: fileAttributions.size,
+    aiLines: totalAiLines,
+    humanLines: totalHumanLines,
+    sessions: Array.from(allSessionIds),
+  };
 }
 
 /**
@@ -234,13 +249,13 @@ export async function runProcess(sha?: string): Promise<void> {
   }
 
   // Set up database directory for this repo
-  const agentblameDir = getAgentBlameDirForRepo(repoRoot);
-  setAgentBlameDir(agentblameDir);
+  const dbPath = getDatabasePath(repoRoot);
+  setDatabasePath(dbPath);
 
   // Fetch remote notes first to avoid push conflicts
   await fetchNotesQuiet(repoRoot);
 
-  // Always resolve to actual SHA (not HEAD)
+  // Resolve commit SHA
   let commitSha = sha || "HEAD";
   const resolveResult = await runGit(repoRoot, ["rev-parse", commitSha]);
   if (resolveResult.exitCode !== 0) {
@@ -252,16 +267,15 @@ export async function runProcess(sha?: string): Promise<void> {
   const result = await processCommit(repoRoot, commitSha);
 
   // Calculate stats
-  const aiLines = result.totalLines - result.unmatchedLines;
-  const humanLines = result.unmatchedLines;
-  const aiPercent = result.totalLines > 0 ? Math.round((aiLines / result.totalLines) * 100) : 0;
+  const totalLines = result.aiLines + result.humanLines;
+  const aiPercent =
+    totalLines > 0 ? Math.round((result.aiLines / totalLines) * 100) : 0;
   const humanPercent = 100 - aiPercent;
 
   const WIDTH = 72;
-  const INNER = WIDTH - 2; // Content width between │ borders (70 chars)
+  const INNER = WIDTH - 2;
   const border = `${c.dim}│${c.reset}`;
 
-  // Helper to create padded line
   const padRight = (content: string, visibleLen: number) =>
     content + " ".repeat(Math.max(0, INNER - visibleLen));
 
@@ -269,11 +283,13 @@ export async function runProcess(sha?: string): Promise<void> {
   console.log("");
   console.log(`${c.dim}┌${"─".repeat(WIDTH - 2)}┐${c.reset}`);
 
-  // Title - centered
-  const title = "Agent Blame";
+  // Title
+  const title = "Agent Blame v3";
   const titlePadLeft = Math.floor((INNER - title.length) / 2);
   const titlePadRight = INNER - title.length - titlePadLeft;
-  console.log(`${border}${" ".repeat(titlePadLeft)}${c.bold}${c.cyan}${title}${c.reset}${" ".repeat(titlePadRight)}${border}`);
+  console.log(
+    `${border}${" ".repeat(titlePadLeft)}${c.bold}${c.cyan}${title}${c.reset}${" ".repeat(titlePadRight)}${border}`
+  );
 
   console.log(`${c.dim}├${"─".repeat(WIDTH - 2)}┤${c.reset}`);
 
@@ -282,20 +298,43 @@ export async function runProcess(sha?: string): Promise<void> {
   const commitColored = `  ${c.yellow}Commit: ${commitSha.slice(0, 8)}${c.reset}`;
   console.log(`${border}${padRight(commitColored, commitVisible.length)}${border}`);
 
+  // Files processed
+  const filesVisible = `  Files: ${result.filesProcessed}`;
+  console.log(`${border}${padRight(filesVisible, filesVisible.length)}${border}`);
+
   console.log(`${c.dim}├${"─".repeat(WIDTH - 2)}┤${c.reset}`);
 
-  if (result.attributions.length > 0) {
-    const aiHeader = "  AI-Generated Code:";
-    console.log(`${border}${padRight(aiHeader, aiHeader.length)}${border}`);
+  // Sessions
+  if (result.sessions.length > 0) {
+    const sessHeader = "  Sessions:";
+    console.log(`${border}${padRight(sessHeader, sessHeader.length)}${border}`);
 
-    for (const attr of result.attributions) {
-      const provider = attr.provider === "cursor" ? "Cursor" : attr.provider === "opencode" ? "OpenCode" : "Claude";
-      const model = attr.model && attr.model !== "claude" ? attr.model : "";
+    for (const sessionId of result.sessions) {
+      const session = getSession(sessionId);
+      const agent = session?.agent || "unknown";
+      const model = session?.model || "";
       const modelStr = model ? ` - ${model}` : "";
-      const visibleText = `    ${attr.path}:${attr.startLine}-${attr.endLine} [${provider}${modelStr}]`;
-      const coloredText = `    ${c.blue}${attr.path}:${attr.startLine}-${attr.endLine}${c.reset} ${c.orange}[${provider}${modelStr}]${c.reset}`;
+
+      const visibleText = `    ${sessionId.slice(0, 8)} [${agent}${modelStr}]`;
+      const coloredText = `    ${c.blue}${sessionId.slice(0, 8)}${c.reset} ${c.orange}[${agent}${modelStr}]${c.reset}`;
       console.log(`${border}${padRight(coloredText, visibleText.length)}${border}`);
+
+      // Show prompt(s) if available
+      const prompts = getPromptsWithToolCounts(sessionId);
+      if (prompts && prompts.length > 0) {
+        for (const prompt of prompts) {
+          const content = prompt.content ?? "[content not stored]";
+          const truncatedPrompt =
+            content.length > 45
+              ? content.substring(0, 45) + "..."
+              : content;
+          const promptVisible = `      [P${prompt.id}] "${truncatedPrompt}"`;
+          const promptColored = `      ${c.dim}[P${prompt.id}] "${truncatedPrompt}"${c.reset}`;
+          console.log(`${border}${padRight(promptColored, promptVisible.length)}${border}`);
+        }
+      }
     }
+
     console.log(`${c.dim}├${"─".repeat(WIDTH - 2)}┤${c.reset}`);
   }
 
@@ -311,8 +350,8 @@ export async function runProcess(sha?: string): Promise<void> {
   const barColored = `  ${c.orange}${"█".repeat(aiBarWidth)}${c.reset}${c.dim}${"░".repeat(humanBarWidth)}${c.reset}`;
   console.log(`${border}${padRight(barColored, barVisible.length)}${border}`);
 
-  const statsVisible = `  AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)    Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)`;
-  const statsColored = `  ${c.orange}AI: ${String(aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
+  const statsVisible = `  AI: ${String(result.aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)    Human: ${String(result.humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)`;
+  const statsColored = `  ${c.orange}AI: ${String(result.aiLines).padStart(3)} lines (${String(aiPercent).padStart(3)}%)${c.reset}    ${c.green}Human: ${String(result.humanLines).padStart(3)} lines (${String(humanPercent).padStart(3)}%)${c.reset}`;
   console.log(`${border}${padRight(statsColored, statsVisible.length)}${border}`);
 
   console.log(`${c.dim}└${"─".repeat(WIDTH - 2)}┘${c.reset}`);

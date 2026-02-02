@@ -13,13 +13,49 @@ import type { DiffHunk, DeletedBlock, MoveMapping } from "../types";
 // Commit Diff
 // =============================================================================
 
+export interface DiffFile {
+  path: string;
+  status: "added" | "modified" | "deleted";
+}
+
+export interface CommitDiff {
+  files: DiffFile[];
+  raw: string;
+}
+
 /**
  * Get the diff for a specific commit (compared to its parent)
  */
 export async function getCommitDiff(
   repoRoot: string,
   sha: string
-): Promise<string> {
+): Promise<CommitDiff> {
+  // Get list of changed files with status
+  const nameStatus = await runGit(repoRoot, [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-status",
+    "-r",
+    sha,
+  ]);
+
+  const files: DiffFile[] = [];
+  if (nameStatus.exitCode === 0) {
+    for (const line of nameStatus.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const [status, ...pathParts] = line.split("\t");
+      const path = pathParts.join("\t"); // Handle paths with tabs
+      if (!path) continue;
+
+      let fileStatus: "added" | "modified" | "deleted" = "modified";
+      if (status === "A") fileStatus = "added";
+      else if (status === "D") fileStatus = "deleted";
+
+      files.push({ path, status: fileStatus });
+    }
+  }
+
+  // Get raw diff
   const result = await runGit(repoRoot, [
     "diff",
     `${sha}^`,
@@ -27,6 +63,7 @@ export async function getCommitDiff(
     "--unified=0",
   ]);
 
+  let raw = result.stdout;
   if (result.exitCode !== 0) {
     // First commit has no parent, try diffing against empty tree
     const emptyTree = await runGit(repoRoot, [
@@ -35,10 +72,21 @@ export async function getCommitDiff(
       sha,
       "--unified=0",
     ]);
-    return emptyTree.stdout;
+    raw = emptyTree.stdout;
   }
 
-  return result.stdout;
+  return { files, raw };
+}
+
+/**
+ * Get raw diff string (legacy compatibility)
+ */
+export async function getCommitDiffRaw(
+  repoRoot: string,
+  sha: string
+): Promise<string> {
+  const diff = await getCommitDiff(repoRoot, sha);
+  return diff.raw;
 }
 
 /**
@@ -379,8 +427,8 @@ export async function getCommitHunks(
   repoRoot: string,
   sha: string
 ): Promise<DiffHunk[]> {
-  const diffOutput = await getCommitDiff(repoRoot, sha);
-  return parseDiff(diffOutput);
+  const diff = await getCommitDiff(repoRoot, sha);
+  return parseDiff(diff.raw);
 }
 
 /**

@@ -99,17 +99,23 @@ function parseBlameOutput(filePath: string, output: string): BlameResult {
       i++;
     }
 
-    // Store commit info
-    if (!commits.has(sha)) {
+    // Store commit info (only set on first occurrence of each SHA)
+    if (!commits.has(sha) && author) {
       commits.set(sha, { author, time: authorTime });
     }
+
+    // Use stored commit info if author wasn't in this block (git blame only includes
+    // author info the first time each SHA appears in porcelain output)
+    const commitInfo = commits.get(sha);
+    const finalAuthor = author || commitInfo?.author || "";
+    const finalTime = author ? authorTime : (commitInfo?.time || authorTime);
 
     lines.push({
       lineNumber,
       origLine,
       sha,
-      author,
-      authorTime,
+      author: finalAuthor,
+      authorTime: finalTime,
       content,
     });
   }
