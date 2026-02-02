@@ -239,12 +239,10 @@ function buildAttributionMap(
         }
       }
 
-      // Second pass: build line attribution with prompt indices
+      // Second pass: build line attribution
       for (const [filePath, fileAttr] of Object.entries(note.files)) {
         for (const range of fileAttr.aiRanges) {
           const session = note.sessions[range.sessionId];
-          const promptKey = `${range.sessionId}:${range.promptId ?? "null"}`;
-          const promptIndex = promptIndexMap.get(promptKey);
 
           // Extract prompt content for tooltip
           let promptContent: string | undefined;
@@ -264,7 +262,6 @@ function buildAttributionMap(
               category: "ai_generated",
               provider: session?.agent || "unknown",
               model: session?.model || null,
-              promptIndex,
               sessionId: range.sessionId,
               promptContent,
             });

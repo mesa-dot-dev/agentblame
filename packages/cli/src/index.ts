@@ -36,15 +36,12 @@ import {
   setDatabasePath,
   getStats,
   getRecentSessions,
-  cleanupOldEntries,
-  resetDatabase,
   getToolCallsForSession,
 } from "./lib/database";
 import {
   getDatabasePath,
   ensureAgentBlameDirs,
   getAgentBlameGitDir,
-  cleanupStaleWorkingDirs,
   getActiveBaseShas,
   readWorkingLog,
   getGitHead,
@@ -96,15 +93,6 @@ async function main(): Promise<void> {
     case "sync":
       await runSync(args.slice(1));
       break;
-    case "status":
-      await runStatus();
-      break;
-    case "prune":
-      await runPrune();
-      break;
-    case "migrate":
-      await runMigrate();
-      break;
     case "debug":
       await runDebug();
       break;
@@ -133,30 +121,24 @@ Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
   agentblame init              Set up hooks for current repo
-  agentblame init --force      Set up hooks and clean up old global install
+  agentblame init --force      Also clean up old global install
   agentblame clean             Remove hooks from current repo
-  agentblame clean --force     Also clean up old global install
   agentblame blame <file>      Show AI attribution for a file
   agentblame blame --summary   Show summary only
   agentblame blame --json      Output as JSON
   agentblame blame --verbose   Show full prompts (not truncated)
-  agentblame status            Show session and capture stats
   agentblame sync              Transfer notes after squash/rebase
   agentblame config            Show all configuration
-  agentblame config get <key>  Get a config value
   agentblame config set <key> <value>  Set a config value
-  agentblame prune             Remove old entries from database
-  agentblame migrate           Migrate from v2 to v3 schema
   agentblame debug             Show detailed debug info
 
 Configuration Keys:
   storePromptContent    Store actual prompt text (default: false)
-                        Set to true to store full prompt content
 
 Examples:
   agentblame init
   agentblame blame src/index.ts
-  agentblame config set storePromptContent false
+  agentblame config set storePromptContent true
 `);
 }
 
@@ -589,48 +571,6 @@ async function runSync(args: string[]): Promise<void> {
   await sync(options);
 }
 
-async function runStatus(): Promise<void> {
-  // Find repo root and set database directory
-  const repoRoot = await getRepoRoot(process.cwd());
-  if (!repoRoot) {
-    console.error("Not in a git repository");
-    process.exit(1);
-  }
-
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
-
-  console.log("\nAgent Blame v3 Status\n");
-
-  try {
-    const stats = getStats();
-    console.log(`Sessions: ${stats.sessions}`);
-    console.log(`Prompts:  ${stats.prompts}`);
-    console.log(`Tool Calls: ${stats.toolCalls}`);
-
-    if (stats.sessions > 0) {
-      console.log("\nRecent sessions:");
-      const recent = getRecentSessions(5);
-      for (const session of recent) {
-        const time = new Date(session.createdAt).toLocaleTimeString();
-        const agent = session.agent;
-        const model = session.model || "";
-        const committed = session.firstCommitSha ? "committed" : "pending";
-        console.log(
-          `  [${agent}] ${session.id.slice(0, 8)} - ${model || "unknown"} (${committed}) at ${time}`
-        );
-      }
-
-      if (stats.sessions > 5) {
-        console.log(`  ... and ${stats.sessions - 5} more`);
-      }
-    }
-  } catch (err) {
-    console.log("  No database found. Run 'agentblame init' first.");
-  }
-
-  console.log("");
-}
 
 async function runConfig(args: string[]): Promise<void> {
   const repoRoot = await getRepoRoot(process.cwd());
@@ -704,70 +644,6 @@ async function runConfig(args: string[]): Promise<void> {
   console.error(`Unknown config subcommand: ${subcommand}`);
   console.error("Usage: agentblame config [get|set] <key> [value]");
   process.exit(1);
-}
-
-async function runPrune(): Promise<void> {
-  // Find repo root and set database directory
-  const repoRoot = await getRepoRoot(process.cwd());
-  if (!repoRoot) {
-    console.error("Not in a git repository");
-    process.exit(1);
-  }
-
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
-
-  console.log("\nAgent Blame Prune\n");
-
-  // Clean up old database entries
-  const dbResult = cleanupOldEntries();
-  console.log(`  Database: Removed ${dbResult.removed} sessions, kept ${dbResult.kept}`);
-
-  // Clean up stale working directories
-  const workingResult = await cleanupStaleWorkingDirs(repoRoot);
-  console.log(
-    `  Working dirs: Cleaned ${workingResult.cleaned.length}, kept ${workingResult.kept.length}`
-  );
-
-  console.log("\nPrune complete!");
-}
-
-async function runMigrate(): Promise<void> {
-  // Find repo root
-  const repoRoot = await getRepoRoot(process.cwd());
-  if (!repoRoot) {
-    console.error("Not in a git repository");
-    process.exit(1);
-  }
-
-  console.log("\nAgent Blame v3 Migration\n");
-
-  // Ensure new directories exist
-  ensureAgentBlameDirs(repoRoot);
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
-
-  // Reset database to v3 schema
-  console.log("  Resetting database to v3 schema...");
-  resetDatabase();
-  console.log("  \x1b[32m✓\x1b[0m Database migrated");
-
-  // Initialize analytics
-  console.log("  Initializing analytics...");
-  await initAnalytics(repoRoot);
-  console.log("  \x1b[32m✓\x1b[0m Analytics initialized");
-
-  // Remove legacy .agentblame directory if it exists
-  const legacyDir = path.join(repoRoot, ".agentblame");
-  if (fs.existsSync(legacyDir)) {
-    console.log("  Removing legacy database...");
-    await fs.promises.rm(legacyDir, { recursive: true });
-    console.log("  \x1b[32m✓\x1b[0m Legacy database removed");
-  }
-
-  console.log("\n\x1b[32m✓\x1b[0m Migration complete!");
-  console.log("\nNote: Existing v2 git notes remain readable.");
-  console.log("New commits will use the v3 format.\n");
 }
 
 async function runDebug(): Promise<void> {

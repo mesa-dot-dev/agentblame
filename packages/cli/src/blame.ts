@@ -217,10 +217,22 @@ export async function blame(
   });
 
   // Collect unique sessions for prompt display
+  // When the same session appears in multiple commits, keep the one with more prompts
+  // (later commits have more complete prompt history)
   const uniqueSessions = new Map<string, SessionMetadata>();
   for (const { sessionId, session } of lineAttributions) {
-    if (sessionId && session && !uniqueSessions.has(sessionId)) {
-      uniqueSessions.set(sessionId, session);
+    if (sessionId && session) {
+      const existing = uniqueSessions.get(sessionId);
+      if (!existing) {
+        uniqueSessions.set(sessionId, session);
+      } else {
+        // Keep the session with more prompts (more complete history)
+        const existingPromptCount = Array.isArray(existing.prompts) ? existing.prompts.length : 0;
+        const newPromptCount = Array.isArray(session.prompts) ? session.prompts.length : 0;
+        if (newPromptCount > existingPromptCount) {
+          uniqueSessions.set(sessionId, session);
+        }
+      }
     }
   }
 

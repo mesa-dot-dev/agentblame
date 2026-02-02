@@ -90,7 +90,6 @@ export interface LineAttribution {
   category: "ai_generated"; // Only ai_generated
   provider: string;
   model: string | null;
-  promptIndex?: string; // P1, P2, etc. - for gutter display
   sessionId?: string; // Session ID for lookup
   promptContent?: string; // Prompt text for tooltip display
 }
