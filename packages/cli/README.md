@@ -6,7 +6,7 @@ Track AI-generated vs human-written code. Know what the AI wrote and focus your 
 
 - [Bun](https://bun.sh/) runtime (required for hooks)
 - Git 2.25+
-- Cursor or Claude Code
+- Cursor, Claude Code, or OpenCode
 
 ```bash
 # Install Bun if you haven't already
@@ -27,16 +27,36 @@ agentblame init
 ```
 
 This sets up:
-- Editor hooks for Cursor and Claude Code
+- Editor hooks for Cursor, Claude Code, and OpenCode
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-**Note:** Restart Cursor/Claude Code after running this.
+**Note:** Restart your editor after running this.
 
 ## Usage
 
-1. Make AI edits in Cursor or Claude Code
+1. Make AI edits in Cursor, Claude Code, or OpenCode
 2. Commit your changes (attribution attached automatically)
+```bash
+git commit -m "new python file"
+```
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                            Agent Blame v3                            │
+├──────────────────────────────────────────────────────────────────────┤
+│  Commit: 7bdf773b                                                    │
+│  Files: 1                                                            │
+├──────────────────────────────────────────────────────────────────────┤
+│  Sessions:                                                           │
+│    b4deb96e [cursor - gpt-5.2-codex]                                 │
+│      [P13] "Add a new file hello_world.py in python and a..."        │
+├──────────────────────────────────────────────────────────────────────┤
+│  Summary:                                                            │
+│  ██████████████████████████████████████████████████                  │
+│  AI:   2 lines (100%)    Human:   0 lines (  0%)                     │
+└──────────────────────────────────────────────────────────────────────┘ 
+```
+
 3. View attribution:
 
 ```bash
@@ -46,31 +66,29 @@ agentblame blame <file>
 ### Example Output
 
 ```
-  src/auth.ts
+  python/hello_world.py
   ──────────────────────────────────────────────────────────────────────
-
-a1b2c3d alice  2024-01-15 ✨ Cursor - claude-3.5-sonnet    │  1 │ export function login() {
-a1b2c3d alice  2024-01-15 ✨ Cursor - claude-3.5-sonnet    │  2 │   const user = await db.find();
-def456b bob    2024-01-20                                   │  3 │   // Rate limiting
-a1b2c3d alice  2024-01-15 ✨ Claude Code                    │  5 │   return validate(user);
-
-  ██████████████████████████████░░░░░░░░░░░░░░░░░░░░
-  ✨ AI: 3 (75%)  │  👤 Human: 1 (25%)
+  Prompts:
+  [P1] Cursor (gpt-5.2-codex)
+       "Add a new file hello_world.py in python and add two print st..."
+       Tools: edit: 1
+  ──────────────────────────────────────────────────────────────────────
+  7bdf773 Murali Varad 2026-02-03 │ P1 │ 1 │ print("Hello, World1")
+  7bdf773 Murali Varad 2026-02-03 │ P1 │ 2 │ print("Hello, World2")
+  ──────────────────────────────────────────────────────────────────────
+  ████████████████████████████████████████
+  AI: 2 lines (100%)  │  Human: 0 lines (0%)
 ```
 
 ## CLI Commands
 
 ```bash
 agentblame init              # Set up hooks for current repo
-agentblame init --force      # Set up hooks and clean up old global install
 agentblame clean             # Remove hooks from current repo
-agentblame clean --force     # Also clean up old global install
 agentblame blame <file>      # Show AI attribution
-agentblame blame --summary   # Summary only
-agentblame blame --json      # JSON output
-agentblame status            # Show pending edits
 agentblame sync              # Transfer notes after squash/rebase
-agentblame prune             # Remove old database entries
+agentblame config            # Show/set configuration
+agentblame debug             # Show detailed debug info
 ```
 
 ## Chrome Extension
@@ -83,9 +101,9 @@ Get it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agen
 
 | Problem | Solution |
 |---------|----------|
-| Hooks not capturing | Restart Cursor/Claude Code |
+| Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
-| After squash/rebase | Run `agentblame sync` |
+| Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
 | Bun not found | Install Bun: `curl -fsSL https://bun.sh/install \| bash` |
 
 ## More Information
