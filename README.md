@@ -162,9 +162,6 @@ agentblame blame src/auth.ts
 | `agentblame init` | Set up hooks and GitHub Actions workflow |
 | `agentblame clean` | Remove hooks and local database |
 | `agentblame blame <file>` | Show AI attribution for a file |
-| `agentblame blame --summary` | Show summary only |
-| `agentblame blame --json` | Output as JSON |
-| `agentblame blame --verbose` | Show full prompts (not truncated) |
 | `agentblame sync` | Transfer notes after squash/rebase |
 | `agentblame config` | Show/set configuration |
 | `agentblame debug` | Show detailed debug info |
