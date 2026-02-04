@@ -552,9 +552,12 @@ function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
 
 /**
  * Get PR diff stats
+ * Uses MERGE_SHA^1..MERGE_SHA to isolate only the changes this PR introduced,
+ * excluding changes from other PRs merged into the base branch in the meantime.
  */
 function getPRDiffStats(): { additions: number; deletions: number } {
-  const diff = run(`git diff ${BASE_SHA}..${MERGE_SHA || "HEAD"}`);
+  const target = MERGE_SHA || "HEAD";
+  const diff = run(`git diff ${target}^1..${target}`);
   if (!diff) return { additions: 0, deletions: 0 };
 
   let additions = 0;
