@@ -812,7 +812,7 @@ export function writeHookTrace(repoRoot: string, input: string): string | null {
   fs.writeFileSync(tracePath, input, "utf8");
 
   // Append to debug.log
-  const logPath = path.join(agentblameDir, "debug.log");
+  const logPath = path.join(tracesDir, "traces.log");
   const logLine = `${new Date().toISOString()} ${filename}\n`;
   fs.appendFileSync(logPath, logLine, "utf8");
 

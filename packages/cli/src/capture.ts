@@ -10,6 +10,7 @@
  *   echo '{"payload": ...}' | bun run capture.ts --provider claude
  *   echo '{"payload": ...}' | bun run capture.ts --provider opencode
  */
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -819,7 +820,7 @@ export async function runCapture(): Promise<void> {
     if (process.env.AGENTBLAME_DEBUG) {
       console.error(`[agentblame] Capture: provider=${provider}, event=${event}`);
     }
-    
+
     if (!input.trim()) {
       console.warn(`[agentblame] Capture: input empty, returning 0`)
       process.exit(0);
