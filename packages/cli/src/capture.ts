@@ -105,6 +105,29 @@ interface OpenCodePayload {
   hook_event?: "before" | "after";
 }
 
+interface CopilotToolArgs {
+  path?: string;         // File path for edit/create
+  content?: string;      // Content for create
+  old_str?: string;    // For edit operations (if provided)
+  new_str?: string;    // For edit operations (if provided)
+  command?: string;      // For bash tool
+  description?: string;  // Tool description
+}
+
+interface CopilotPayload {
+  timestamp: number;
+  cwd: string;
+  source: string;
+  initialPrompt?: string;
+  prompt?: string;
+  toolName?: string;      // "edit" | "create" | "bash" | "view"
+  toolArgs?: CopilotToolArgs;      // JSON string -> CopilotToolArgs
+  toolResult?: {
+    resultType: "success" | "failure" | "denied";
+    textResultForLlm: string;
+  };
+}
+
 // =============================================================================
 // Utilities
 // =============================================================================
@@ -454,17 +477,14 @@ async function getBeforeContent(
 // Payload Processing
 // =============================================================================
 
-function parseArgs(): {
-  provider: "cursor" | "claude" | "opencode";
-  event?: string;
-} {
+function parseArgs(): { provider: "cursor" | "claude" | "opencode" | "copilot"; event?: string } {
   const args = process.argv.slice(2);
-  let provider: "cursor" | "claude" | "opencode" = "cursor";
+  let provider: "cursor" | "claude" | "opencode" | "copilot" = "cursor";
   let event: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--provider" && args[i + 1]) {
-      provider = args[i + 1] as "cursor" | "claude" | "opencode";
+      provider = args[i + 1] as "cursor" | "claude" | "opencode" | "copilot";
       i++;
     } else if (args[i] === "--event" && args[i + 1]) {
       event = args[i + 1];
@@ -802,6 +822,166 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
   }
 }
 
+/**
+ * Process Copilot payload.
+ * Copilot provides toolArgs as a JSON string containing the file path.
+ * Only process edit and create tools on success.
+ */
+async function processCopilotPayload(payload: CopilotPayload, event?: string): Promise<void> {
+
+  const toolName = payload.toolName?.toLowerCase() || "";
+  const eventType = event || "";
+  const pathForRepo = payload.cwd;
+  const copilotModel = "copilot";
+
+  // Parse toolArgs JSON string
+  const toolArgsRaw = payload?.toolArgs;
+  let toolArgs: CopilotToolArgs = toolArgsRaw || {};
+  if (toolArgsRaw && typeof toolArgsRaw === "string") {
+    toolArgs = JSON.parse(toolArgsRaw);
+  }
+
+  if (eventType === "sessionStart") {
+    const conversationId = `copilot-sessionstart-${Date.now()}`;
+    const ctx = await setupCaptureContext(pathForRepo, copilotModel, conversationId, copilotModel);
+    if (!ctx) return;
+    
+    upsertSession({
+      id: ctx.sessionId,
+      agent: copilotModel,
+      repo: ctx.repoId,
+      model: ctx.model,
+      conversationId,
+    });
+
+    if (payload.initialPrompt) {
+      const contentHash = hashPromptContent(payload.initialPrompt);
+      if (!promptExists(ctx.sessionId, contentHash)) {
+        insertPrompt({
+          sessionId: ctx.sessionId,
+          content: ctx.storePromptContent ? payload.initialPrompt : null,
+          contentHash,
+        });
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] copilot sessionStart success`);
+        }
+      } else {
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] copilot sessionStart prompt already exists`);
+        }
+      }
+    }
+    // we are done with this event, don't process anything else from it
+    return;
+  }
+
+  if (eventType === "preToolUse") {
+    if (toolName === "edit") {
+      // Parse toolArgs JSON string
+      const filePath = toolArgs?.path;
+      if (filePath) {
+        // TODO: get a real conversation ID ?
+        const conversationId = `copilot-pretooluse-${Date.now()}`;
+        const ctx = await setupCaptureContext(pathForRepo, copilotModel, conversationId, copilotModel);
+        if (!ctx) return;
+        
+        await detectAndRecordHumanEdits(ctx, conversationId, filePath);
+        await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] copilot preToolUse success: ${filePath}`);
+        }
+      }
+    }
+    // TODO: support multi-file edits? (Will copilot send a multi-edit, or multiple edit events?)
+
+    // we are done with this event, don't process anything else from it
+    return;
+  }
+
+  if (eventType === "userPromptSubmitted") {
+    const conversationId = `copilot-userpromptsubmitted-${Date.now()}`;
+    const ctx = await setupCaptureContext(pathForRepo, copilotModel, conversationId, copilotModel);
+    if (!ctx) return;
+
+    const prompt = payload.prompt || "";
+
+    const contentHash = hashPromptContent(prompt);
+    if (!promptExists(ctx.sessionId, contentHash)) {
+      insertPrompt({
+        sessionId: ctx.sessionId,
+        content: ctx.storePromptContent ? prompt : null,
+        contentHash,
+      });
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame] copilot userPromptSubmitted success: ${prompt}`);
+      }
+    } else {
+      if (process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame] copilot userPromptSubmitted already exists: ${prompt}`);
+      }
+    }
+  }
+
+  // assume this is now a PostToolUse event
+  // Only process successful operations
+  if (payload.toolResult?.resultType !== "success") {
+    console.warn(`[agentblame] copilot payload was not successful, skipping`);
+    return;
+  }
+
+  // Only process edit and create tools
+  if (toolName !== "edit" && toolName !== "create") {
+    console.warn(`[agentblame] copilot tool (${toolName}) not edit / create, skipping`);
+    return;
+  }
+
+  const filePath = toolArgs.path;
+  if (!filePath) {
+    console.warn(`[agentblame] copilot payload toolargs missing filepath`);
+    return;
+  }
+
+  // TODO: get a real conversation ID
+  const timestamp = new Date(payload.timestamp).toISOString();
+  const ctx = await setupCaptureContext(filePath, "copilot", `copilot-${timestamp}`, "copilot");
+  if (!ctx) return;
+
+  const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(ctx.repoRoot, filePath);
+
+  // Handle create tool (new file creation)
+  if (toolName === "create") {
+    // For create, we need to read the file to get its content
+    const afterCreateContent = readFileContent(absolutePath);
+    if (afterCreateContent) {
+      await recordAIDelta(ctx, filePath, "", afterCreateContent);
+    }
+  }
+
+  // Handle edit tool (editing a file)
+  if (toolName === "edit") {
+    const conversationId = `copilot-posttooluse-${Date.now()}`;
+    const beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+    const afterContent = readFileContent(absolutePath);
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] PostToolUse ${toolName}: ${filePath}`);
+      console.error(`[agentblame]   beforeContent: ${beforeContent ? beforeContent.length + ' chars' : 'null'}`);
+      console.error(`[agentblame]   afterContent: ${afterContent ? afterContent.length + ' chars' : 'null'}`);
+    }
+
+    if (afterContent) {
+      await recordAIDelta(ctx, filePath, beforeContent, afterContent);
+      // Update checkpoint to current state so next PreToolUse doesn't
+      // incorrectly detect this AI edit as a "human edit"
+      await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+    } else if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame]   SKIPPED: no afterContent for ${filePath}`);
+    }
+  }
+}
+
 // =============================================================================
 // Main
 // =============================================================================
@@ -839,6 +1019,8 @@ export async function runCapture(): Promise<void> {
       await processClaudePayload(payload as ClaudePayload);
     } else if (provider === "opencode") {
       await processOpenCodePayload(payload as OpenCodePayload);
+    } else if (provider === "copilot") {
+      await processCopilotPayload(payload as CopilotPayload, event);
     }
 
     process.exit(0);

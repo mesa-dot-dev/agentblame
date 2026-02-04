@@ -24,6 +24,7 @@ import {
   installCursorHooks,
   installClaudeHooks,
   installOpenCodeHooks,
+  installCopilotHooks,
   installGitHubAction,
   installGitHookSmart,
   detectHooksSetup,
@@ -266,6 +267,9 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   const opencodeSuccess = await installOpenCodeHooks(repoRoot);
   results.push({ name: "OpenCode hooks (.opencode/)", success: opencodeSuccess });
+
+  const copilotSuccess = await installCopilotHooks(repoRoot);
+  results.push({ name: "Copilot hooks", success: copilotSuccess });
 
   // Install GitHub Actions workflow
   const githubActionSuccess = await installGitHubAction(repoRoot);
