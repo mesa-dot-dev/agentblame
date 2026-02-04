@@ -2,6 +2,8 @@
 out/
 packages/cli/dist/
 packages/chrome/dist/
+packages/firefox/dist/
+packages/extension/dist/
 *.vsix
 
 # Dependencies
@@ -59,6 +61,7 @@ agentblame-chrome.zip
 
 # Build artifacts
 packages/chrome/agentblame-chrome-*.zip
+packages/firefox/agentblame-firefox-*.zip
 Implementation.md
 
 # OpenCode local plugin (installed by agentblame init)

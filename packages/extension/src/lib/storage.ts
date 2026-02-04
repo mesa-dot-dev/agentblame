@@ -1,8 +1,9 @@
 /**
- * Chrome storage wrapper for Agent Blame settings
+ * Browser storage wrapper for Agent Blame settings
  */
 
 import type { AgentBlameStorage } from "../types";
+import { api } from "./browser";
 
 // Debug logging - disabled in production
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -19,7 +20,7 @@ const STORAGE_KEYS = {
  * Get the GitHub token from storage
  */
 export async function getToken(): Promise<string | null> {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.TOKEN);
+  const result = await api.storage.local.get(STORAGE_KEYS.TOKEN);
   const token = result[STORAGE_KEYS.TOKEN] || null;
   log("getToken:", token ? `${token.slice(0, 8)}...` : "null");
   return token;
@@ -29,21 +30,21 @@ export async function getToken(): Promise<string | null> {
  * Save the GitHub token to storage
  */
 export async function setToken(token: string): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEYS.TOKEN]: token });
+  await api.storage.local.set({ [STORAGE_KEYS.TOKEN]: token });
 }
 
 /**
  * Remove the GitHub token from storage
  */
 export async function removeToken(): Promise<void> {
-  await chrome.storage.local.remove(STORAGE_KEYS.TOKEN);
+  await api.storage.local.remove(STORAGE_KEYS.TOKEN);
 }
 
 /**
  * Check if extension is enabled
  */
 export async function isEnabled(): Promise<boolean> {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.ENABLED);
+  const result = await api.storage.local.get(STORAGE_KEYS.ENABLED);
   // Default to enabled if not set
   const enabled = result[STORAGE_KEYS.ENABLED] !== false;
   log("isEnabled:", enabled, "(raw value:", result[STORAGE_KEYS.ENABLED], ")");
@@ -54,14 +55,14 @@ export async function isEnabled(): Promise<boolean> {
  * Set enabled state
  */
 export async function setEnabled(enabled: boolean): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEYS.ENABLED]: enabled });
+  await api.storage.local.set({ [STORAGE_KEYS.ENABLED]: enabled });
 }
 
 /**
  * Get all Agent Blame storage data
  */
 export async function getAll(): Promise<AgentBlameStorage> {
-  const result = await chrome.storage.local.get([
+  const result = await api.storage.local.get([
     STORAGE_KEYS.TOKEN,
     STORAGE_KEYS.ENABLED,
   ]);

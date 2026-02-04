@@ -10,6 +10,7 @@ import {
   setEnabled,
   validateToken,
 } from "../lib/storage";
+import { api } from "../lib/browser";
 
 // DOM Elements - these are guaranteed to exist in popup.html
 const statusIndicator = document.getElementById("status-indicator");
@@ -161,14 +162,13 @@ async function handleEnabledChange(): Promise<void> {
   }
 
   // Notify content scripts to update
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]?.id) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        type: "SETTINGS_CHANGED",
-        enabled,
-      });
-    }
-  });
+  const tabs = await api.tabs.query({ active: true, currentWindow: true });
+  if (tabs[0]?.id) {
+    api.tabs.sendMessage(tabs[0].id, {
+      type: "SETTINGS_CHANGED",
+      enabled,
+    });
+  }
 }
 
 // Event listeners

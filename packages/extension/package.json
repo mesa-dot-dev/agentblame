@@ -1,0 +1,12 @@
+{
+  "name": "@agentblame/extension",
+  "version": "3.0.3",
+  "description": "Agent Blame Extension - Shared source for Chrome and Firefox",
+  "private": true,
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^20.11.30",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  }
+}

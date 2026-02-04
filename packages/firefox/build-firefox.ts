@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Build script for Agent Blame Chrome Extension
+ * Build script for Agent Blame Firefox Extension
  *
- * Compiles TypeScript and bundles for Chrome extension.
+ * Compiles TypeScript and bundles for Firefox extension.
  * Source code lives in ../extension/src/, this script only handles
- * Chrome-specific manifest and packaging.
+ * Firefox-specific manifest and packaging.
  */
 
 import { build } from "esbuild";
@@ -36,7 +36,7 @@ function copyStatic(): void {
   mkdirSync(join(DIST_DIR, "background"), { recursive: true });
   mkdirSync(join(DIST_DIR, "icons"), { recursive: true });
 
-  // Copy Chrome-specific manifest
+  // Copy Firefox-specific manifest
   copyFileSync(MANIFEST_FILE, join(DIST_DIR, "manifest.json"));
 
   // Copy popup HTML and CSS from shared source
@@ -69,7 +69,7 @@ async function bundle(): Promise<void> {
     bundle: true,
     outfile: join(DIST_DIR, "popup", "popup.js"),
     format: "iife",
-    target: "chrome100",
+    target: "firefox109",
     minify: false,
     sourcemap: true,
   });
@@ -81,19 +81,20 @@ async function bundle(): Promise<void> {
     bundle: true,
     outfile: join(DIST_DIR, "content", "router.js"),
     format: "iife",
-    target: "chrome100",
+    target: "firefox109",
     minify: false,
     sourcemap: true,
   });
   console.log("✓ Bundled router.js");
 
-  // Bundle background service worker
+  // Bundle background script
+  // Firefox MV3 uses "scripts" instead of "service_worker", bundled as IIFE
   await build({
     entryPoints: [join(EXTENSION_SRC, "background", "background.ts")],
     bundle: true,
     outfile: join(DIST_DIR, "background", "background.js"),
-    format: "esm",
-    target: "chrome100",
+    format: "iife",
+    target: "firefox109",
     minify: false,
     sourcemap: true,
   });
@@ -113,12 +114,12 @@ function createPlaceholderIcons(): void {
 }
 
 /**
- * Create zip file for Chrome Web Store upload
+ * Create zip file for Firefox Add-ons submission
  */
 function createZip(): string {
   const manifest = JSON.parse(readFileSync(join(DIST_DIR, "manifest.json"), "utf-8"));
   const version = manifest.version;
-  const zipName = `agentblame-chrome-${version}.zip`;
+  const zipName = `agentblame-firefox-${version}.zip`;
   const zipPath = join(import.meta.dir, zipName);
 
   if (existsSync(zipPath)) {
@@ -135,7 +136,7 @@ function createZip(): string {
  * Main build function
  */
 async function main(): Promise<void> {
-  console.log("Building Agent Blame Chrome Extension...\n");
+  console.log("Building Agent Blame Firefox Extension...\n");
 
   try {
     clean();
@@ -147,11 +148,10 @@ async function main(): Promise<void> {
     console.log("\n✓ Build complete!");
     console.log(`  Output: ${DIST_DIR}`);
     console.log(`  Zip: ${zipPath}`);
-    console.log("\nTo load in Chrome:");
-    console.log("  1. Go to chrome://extensions");
-    console.log("  2. Enable 'Developer mode'");
-    console.log("  3. Click 'Load unpacked'");
-    console.log(`  4. Select: ${DIST_DIR}`);
+    console.log("\nTo load in Firefox:");
+    console.log("  1. Go to about:debugging#/runtime/this-firefox");
+    console.log("  2. Click 'Load Temporary Add-on...'");
+    console.log(`  3. Select: ${join(DIST_DIR, "manifest.json")}`);
   } catch (error) {
     console.error("Build failed:", error);
     process.exit(1);

@@ -11,12 +11,15 @@
   },
   "workspaces": [
     "packages/cli",
-    "packages/chrome"
+    "packages/extension",
+    "packages/chrome",
+    "packages/firefox"
   ],
   "scripts": {
-    "build": "bun run build:cli && bun run build:chrome",
+    "build": "bun run build:cli && bun run build:chrome && bun run build:firefox",
     "build:cli": "cd packages/cli && bun run build",
     "build:chrome": "cd packages/chrome && bun run build",
+    "build:firefox": "cd packages/firefox && bun run build",
     "clean": "rm -rf packages/*/dist packages/*/out",
     "test": "bun test",
     "lint": "biome lint packages/",

@@ -407,6 +407,18 @@ function attachPeriodListeners(): void {
   if (refreshBtn) {
     refreshBtn.addEventListener("click", handleRefresh);
   }
+
+  // Attach avatar error handlers (CSP blocks inline onerror)
+  const container = document.getElementById(PAGE_CONTAINER_ID);
+  if (container) {
+    for (const img of container.querySelectorAll<HTMLImageElement>(".ab-avatar-img")) {
+      img.addEventListener("error", () => {
+        img.style.display = "none";
+        const fallback = img.nextElementSibling as HTMLElement | null;
+        if (fallback) fallback.style.display = "flex";
+      });
+    }
+  }
 }
 
 /**
@@ -1128,8 +1140,8 @@ function renderContributorsSection(analytics: AnalyticsData): string {
           <img
             src="${avatarUrl}"
             alt="${escapeHtml(c.username)}"
+            class="ab-avatar-img"
             style="width: 32px; height: 32px; border-radius: 50%; background: var(--color-canvas-subtle); position: absolute; top: 0; left: 0;"
-            onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
           />
           ` : ''}
           <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--color-canvas-subtle); ${isEmail ? 'display: flex' : 'display: none'}; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: var(--color-fg-muted);">

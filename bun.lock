@@ -18,7 +18,7 @@
     },
     "packages/chrome": {
       "name": "@agentblame/chrome",
-      "version": "0.1.0",
+      "version": "3.0.2",
       "devDependencies": {
         "@types/chrome": "^0.0.287",
         "@types/node": "^20.11.30",
@@ -28,7 +28,7 @@
     },
     "packages/cli": {
       "name": "@mesadev/agentblame",
-      "version": "0.1.1",
+      "version": "3.0.6",
       "bin": {
         "agentblame": "./dist/index.js",
       },
@@ -42,9 +42,33 @@
         "typescript": "^5.5.4",
       },
     },
+    "packages/extension": {
+      "name": "@agentblame/extension",
+      "version": "3.0.2",
+      "devDependencies": {
+        "@types/chrome": "^0.0.287",
+        "@types/node": "^20.11.30",
+        "esbuild": "^0.24.0",
+        "typescript": "^5.5.4",
+      },
+    },
+    "packages/firefox": {
+      "name": "@agentblame/firefox",
+      "version": "3.0.2",
+      "devDependencies": {
+        "@types/chrome": "^0.0.287",
+        "@types/node": "^20.11.30",
+        "esbuild": "^0.24.0",
+        "typescript": "^5.5.4",
+      },
+    },
   },
   "packages": {
     "@agentblame/chrome": ["@agentblame/chrome@workspace:packages/chrome"],
+
+    "@agentblame/extension": ["@agentblame/extension@workspace:packages/extension"],
+
+    "@agentblame/firefox": ["@agentblame/firefox@workspace:packages/firefox"],
 
     "@biomejs/biome": ["@biomejs/biome@2.3.11", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.3.11", "@biomejs/cli-darwin-x64": "2.3.11", "@biomejs/cli-linux-arm64": "2.3.11", "@biomejs/cli-linux-arm64-musl": "2.3.11", "@biomejs/cli-linux-x64": "2.3.11", "@biomejs/cli-linux-x64-musl": "2.3.11", "@biomejs/cli-win32-arm64": "2.3.11", "@biomejs/cli-win32-x64": "2.3.11" }, "bin": { "biome": "bin/biome" } }, "sha512-/zt+6qazBWguPG6+eWmiELqO+9jRsMZ/DBU3lfuU2ngtIQYzymocHhKiZRyrbra4aCOoyTg/BmY+6WH5mv9xmQ=="],
 

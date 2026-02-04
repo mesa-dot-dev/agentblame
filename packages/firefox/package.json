@@ -1,0 +1,17 @@
+{
+  "name": "@agentblame/firefox",
+  "version": "3.0.3",
+  "description": "Agent Blame Firefox Extension - See AI attribution on GitHub PRs",
+  "private": true,
+  "scripts": {
+    "build": "bun run build-firefox.ts",
+    "clean": "rm -rf dist",
+    "zip": "cd dist && zip -r ../agentblame-firefox.zip ."
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^20.11.30",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  }
+}

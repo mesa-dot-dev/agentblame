@@ -3,6 +3,7 @@
  */
 
 import type { PRContext, DiffLine, LineAttribution, GitNotesAttribution, SessionMetadata, PromptEntry, PromptInfo } from "../types";
+import { api } from "../lib/browser";
 
 // Debug logging - disabled in production
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -557,8 +558,8 @@ export function injectPRSummary(stats: {
     stats.total > 0 ? Math.round((stats.aiGenerated / stats.total) * 100) : 0;
 
   // Get the extension icon URL
-  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
-    ? chrome.runtime.getURL("icons/icon48.png")
+  const iconUrl = api.runtime?.getURL
+    ? api.runtime.getURL("icons/icon48.png")
     : "";
 
   // Colors
@@ -663,8 +664,8 @@ export function showLoading(): void {
   summary.className = "ab-pr-summary ab-pr-summary-loading";
 
   // Get the extension icon URL
-  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
-    ? chrome.runtime.getURL("icons/icon48.png")
+  const iconUrl = api.runtime?.getURL
+    ? api.runtime.getURL("icons/icon48.png")
     : "";
 
   summary.innerHTML = `
@@ -728,8 +729,8 @@ export function hideLoading(): void {
  */
 export function showError(message: string): void {
   // Get the extension icon URL
-  const iconUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL
-    ? chrome.runtime.getURL("icons/icon48.png")
+  const iconUrl = api.runtime?.getURL
+    ? api.runtime.getURL("icons/icon48.png")
     : "";
 
   // Check if loading header exists - update it instead of removing
