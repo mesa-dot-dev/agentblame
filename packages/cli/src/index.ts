@@ -319,6 +319,10 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     setDatabasePath(dbPath);
     initDatabase();
     results.push({ name: "Database (.git/agentblame/)", success: true });
+    if (traceHooks) {
+      setConfig(repoRoot, 'traceHooks', traceHooks);
+      results.push({ name: "Config (traceHooks = true)", success: true });
+    }
   } catch (err) {
     results.push({ name: "Database", success: false });
   }
