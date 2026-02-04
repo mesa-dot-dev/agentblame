@@ -12,6 +12,7 @@
  *   BASE_SHA    - Base commit SHA before merge
  *   HEAD_SHA    - Last commit SHA on feature branch
  *   MERGE_SHA   - The merge commit SHA (for merge/squash)
+ *   MERGED_AT   - The PR merge timestamp (ISO 8601)
  */
 
 import { execSync, spawnSync } from "node:child_process";
@@ -31,6 +32,7 @@ const BASE_SHA = process.env.BASE_SHA || "";
 const HEAD_SHA = process.env.HEAD_SHA || "";
 const MERGE_SHA = process.env.MERGE_SHA || "";
 const PR_AUTHOR = process.env.PR_AUTHOR || "unknown";
+const MERGED_AT = process.env.MERGED_AT || "";
 
 // Notes refs
 const NOTES_REF = "refs/notes/agentblame";
@@ -646,11 +648,12 @@ function mergeModels(a: ModelBreakdown, b: ModelBreakdown): ModelBreakdown {
  */
 function updateAnalytics(
   existing: AnalyticsNote | null,
-  prData: PRAttributionData
+  prData: PRAttributionData,
+  commitCount: number
 ): AnalyticsNote {
   const prStats = computePRStats(prData);
   const diffStats = getPRDiffStats();
-  const now = new Date().toISOString();
+  const now = MERGED_AT || new Date().toISOString();
 
   // Determine if this PR was tracked (has session data)
   const isTracked = Object.keys(prData.sessions).length > 0;
@@ -670,6 +673,7 @@ function updateAnalytics(
     humanLines,
     unknownLines,
     prompts: prStats.prompts,
+    commits: commitCount,
     mergedAt: now,
   };
 
@@ -968,6 +972,8 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
   const prData = collectMergeAttributions(mergeType);
   log(`Collected ${Object.keys(prData.sessions).length} sessions from PR`);
 
+  const commitCount = getPRCommits().length;
+
   let existing = readAnalyticsNote();
 
   // Check if existing analytics is v2 format (incompatible) - if so, start fresh
@@ -983,7 +989,7 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
     log("No existing analytics found, creating new");
   }
 
-  const updated = updateAnalytics(existing, prData);
+  const updated = updateAnalytics(existing, prData, commitCount);
 
   if (writeAnalyticsNote(updated)) {
     const pct = updated.summary.totalLines > 0

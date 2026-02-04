@@ -246,6 +246,7 @@ export interface PREntry {
   humanLines: number;
   unknownLines: number;
   prompts: number;
+  commits: number;
   mergedAt: string;
 }
 
