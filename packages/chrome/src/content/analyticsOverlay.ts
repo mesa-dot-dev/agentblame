@@ -884,6 +884,10 @@ function renderTrendLine(
               <stop offset="100%" style="stop-color:${color};stop-opacity:0" />
             </linearGradient>
           </defs>
+          ${[1, 2, 3, 4].map(i => {
+            const x = padding + (i / 5) * (chartWidth - padding * 2);
+            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="var(--color-border-muted)" stroke-width="0.5" opacity="0.4" stroke-dasharray="3,3" />`;
+          }).join('\n          ')}
           <polygon points="${fillPoints}" fill="url(#gradient-${color.replace('#', '')})" />
           <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
@@ -955,6 +959,10 @@ function renderMultiTrendLine(
         <div style="position: absolute; bottom: ${padding}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
         <!-- SVG Chart -->
         <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" style="display: block;">
+          ${[1, 2, 3, 4].map(i => {
+            const x = padding + (i / 5) * (chartWidth - padding * 2);
+            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="var(--color-border-muted)" stroke-width="0.5" opacity="0.4" stroke-dasharray="3,3" />`;
+          }).join('\n          ')}
           ${lines}
         </svg>
       </div>

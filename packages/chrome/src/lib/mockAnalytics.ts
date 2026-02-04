@@ -497,16 +497,32 @@ function normalizeTimeSeriestoTrends(
 }
 
 /**
- * Convert array of data points to TrendBucket format
+ * Parse a time key into a timestamp for offset calculation.
+ * Hourly keys are like "2026-02-04T01", daily keys like "2026-02-04".
+ */
+function parseTimeKey(key: string, isHourly: boolean): number {
+  if (isHourly) {
+    return new Date(key + ":00:00Z").getTime();
+  }
+  return new Date(key + "T00:00:00Z").getTime();
+}
+
+/**
+ * Convert array of data points to TrendBucket format.
+ * Places each data point at its correct time offset within the window,
+ * filling gaps with zeros.
  */
 function convertDataPointsToTrendBucket(
   dataPoints: Array<Record<string, unknown>> | undefined,
   size: number,
   timeKey: "hour" | "date"
 ): Record<string, unknown> {
+  const isHourly = timeKey === "hour";
+  const stepMs = isHourly ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+
   if (!dataPoints || dataPoints.length === 0) {
     return {
-      end: timeKey === "hour"
+      end: isHourly
         ? new Date().toISOString().slice(0, 13)
         : new Date().toISOString().slice(0, 10),
       ai: new Array(size).fill(0),
@@ -519,62 +535,66 @@ function convertDataPointsToTrendBucket(
     };
   }
 
-  // Data points are sorted most recent first, we need oldest first for arrays
-  const sorted = [...dataPoints].reverse();
+  // Get the end timestamp from the most recent data point (sorted most-recent-first)
+  const mostRecent = dataPoints[0];
+  const end = (mostRecent[timeKey] as string) || (isHourly
+    ? new Date().toISOString().slice(0, 13)
+    : new Date().toISOString().slice(0, 10));
+  const endMs = parseTimeKey(end, isHourly);
 
-  // Pad with zeros at the beginning to reach desired size
-  const padSize = Math.max(0, size - sorted.length);
-
-  const ai: number[] = new Array(padSize).fill(0);
-  const human: number[] = new Array(padSize).fill(0);
-  const unknown: number[] = new Array(padSize).fill(0);
-  const commits: number[] = new Array(padSize).fill(0);
-  const prompts: number[] = new Array(padSize).fill(0);
+  // Initialize arrays with zeros
+  const ai: number[] = new Array(size).fill(0);
+  const human: number[] = new Array(size).fill(0);
+  const unknown: number[] = new Array(size).fill(0);
+  const commits: number[] = new Array(size).fill(0);
+  const prompts: number[] = new Array(size).fill(0);
   const tools: Record<string, number[]> = {};
   const models: Record<string, number[]> = {};
 
   // Collect all tool/model keys first
   const allToolKeys = new Set<string>();
   const allModelKeys = new Set<string>();
-  for (const dp of sorted) {
+  for (const dp of dataPoints) {
     const byAgent = dp.byAgent as Record<string, number> | undefined;
     const byModel = dp.byModel as Record<string, number> | undefined;
     if (byAgent) Object.keys(byAgent).forEach(k => allToolKeys.add(k));
     if (byModel) Object.keys(byModel).forEach(k => allModelKeys.add(k));
   }
 
-  // Initialize tool/model arrays with padding
   for (const key of allToolKeys) {
-    tools[key] = new Array(padSize).fill(0);
+    tools[key] = new Array(size).fill(0);
   }
   for (const key of allModelKeys) {
-    models[key] = new Array(padSize).fill(0);
+    models[key] = new Array(size).fill(0);
   }
 
-  // Fill in data from data points
-  for (const dp of sorted) {
-    ai.push((dp.aiLines as number) || 0);
-    human.push((dp.humanLines as number) || 0);
-    unknown.push((dp.unknownLines as number) || 0);
-    commits.push((dp.commits as number) || 0);
-    prompts.push((dp.prompts as number) || 0);
+  // Place each data point at its correct time offset
+  for (const dp of dataPoints) {
+    const dpKey = dp[timeKey] as string;
+    if (!dpKey) continue;
+
+    const dpMs = parseTimeKey(dpKey, isHourly);
+    const stepsFromEnd = Math.round((endMs - dpMs) / stepMs);
+    const index = size - 1 - stepsFromEnd;
+
+    if (index < 0 || index >= size) continue; // Outside the window
+
+    ai[index] = (dp.aiLines as number) || 0;
+    human[index] = (dp.humanLines as number) || 0;
+    unknown[index] = (dp.unknownLines as number) || 0;
+    commits[index] = (dp.commits as number) || 0;
+    prompts[index] = (dp.prompts as number) || 0;
 
     const byAgent = dp.byAgent as Record<string, number> | undefined;
     const byModel = dp.byModel as Record<string, number> | undefined;
 
     for (const key of allToolKeys) {
-      tools[key].push(byAgent?.[key] || 0);
+      tools[key][index] = byAgent?.[key] || 0;
     }
     for (const key of allModelKeys) {
-      models[key].push(byModel?.[key] || 0);
+      models[key][index] = byModel?.[key] || 0;
     }
   }
-
-  // Get the end timestamp from the most recent data point
-  const mostRecent = dataPoints[0];
-  const end = (mostRecent[timeKey] as string) || (timeKey === "hour"
-    ? new Date().toISOString().slice(0, 13)
-    : new Date().toISOString().slice(0, 10));
 
   return { end, ai, human, unknown, commits, prompts, tools, models };
 }

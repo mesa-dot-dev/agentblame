@@ -91,6 +91,14 @@ agentblame config            # Show/set configuration
 agentblame debug             # Show detailed debug info
 ```
 
+### Examples
+
+```bash
+agentblame init
+agentblame blame src/index.ts
+agentblame config set storePromptContent true
+```
+
 ## Chrome Extension
 
 See AI markers on GitHub PRs with our Chrome extension.

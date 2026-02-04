@@ -736,6 +736,7 @@ jobs:
           BASE_SHA: \${{ github.event.pull_request.base.sha }}
           HEAD_SHA: \${{ github.event.pull_request.head.sha }}
           MERGE_SHA: \${{ github.event.pull_request.merge_commit_sha }}
+          MERGED_AT: \${{ github.event.pull_request.merged_at }}
 
       - name: Push notes and tags
         run: |

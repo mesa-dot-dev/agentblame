@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/2vvEJFrCHV)
 
-[Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
+[Quick Start](#quick-start) | [Chrome Extension](#chrome-extension-features) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
 <br>
 
 <img src="docs/github-view.png" alt="Agent Blame showing AI attribution on a GitHub PR" width="700">
@@ -149,9 +149,34 @@ agentblame blame src/auth.ts
 
 ## Chrome Extension Features
 
-- AI percentage badge per file
-- Sparkle markers on AI-generated lines
-- PR summary showing total AI vs human code
+### PR Attribution
+
+<!-- TODO: Add screenshot -->
+![Agent Blame PR Attribution](docs/pr-attribution.png)
+
+<br>
+
+- **PR summary** at the top of every PR showing AI-generated vs human-written line counts and overall AI percentage
+- **File-level badges** in the diff header for each file
+- **Line-level gutter markers** that highlight AI-generated lines in orange
+- **Hover details** on any gutter marker showing the tool, model, and prompt used to generate that code
+
+### Analytics Dashboard
+
+Full repository-wide analytics, accessible from the **Insights** sidebar on any GitHub repository.
+
+<!-- TODO: Add screenshot -->
+![Agent Blame Analytics Dashboard](docs/analytics-dashboard.png)
+
+<br>
+
+- **Summary stats** showing AI vs human percentages, total lines tracked, and commit-to-prompt ratio
+- **Tool breakdown** showing which AI tools (Cursor, Claude Code, OpenCode, etc.) generated the most code
+- **Model breakdown** with the top models used across the repository
+- **Trend charts** for AI code percentage, prompt efficiency, tool usage, and model usage over time
+- **Time period filtering** to slice all metrics by past 24 hours, 3 days, week, month, or all time
+- **Per-contributor stats** with AI usage percentage, commit-to-prompt ratio, and line counts
+- **Recent PR activity** listing the latest PRs with AI attribution badges and diff stats
 
 ---
 
