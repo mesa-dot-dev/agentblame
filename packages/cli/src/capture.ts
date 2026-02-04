@@ -51,6 +51,7 @@ import {
   getLastDeltaForFile,
 } from "./lib/delta";
 import type { AiAgent } from "./lib/types";
+import { writeHookTrace } from "./lib/hooks";
 
 // =============================================================================
 // Types
@@ -232,6 +233,8 @@ async function setupCaptureContext(
   conversationId: string,
   model: string | null
 ): Promise<CaptureContext | null> {
+  // this will override the config used before we had a payload from the agent. Once we have a payload,
+  // prefer the paths indicated in the payload.
   const repoRoot = await findRepoRoot(filePath);
   if (!repoRoot) {
     if (process.env.AGENTBLAME_DEBUG) {
@@ -819,7 +822,23 @@ export async function runCapture(): Promise<void> {
     }
 
     if (!input.trim()) {
+      console.warn(`[agentblame] Capture: input empty, returning 0`)
       process.exit(0);
+    }
+
+    // make best-effort to load an existing config using cwd- payload may override this config dir later in the process
+    const repoRoot = await findRepoRoot(process.cwd());
+    if (!repoRoot) {
+      console.warn(`[agentblame] Capture: could not detect repo root via cwd, configs may not work until we get a payload`)
+    }
+
+    const traceHooks = repoRoot ? await getConfig(repoRoot, 'traceHooks') : false;
+
+    if (traceHooks && repoRoot) {
+      const traceFile = writeHookTrace(repoRoot, input);
+      if (traceFile && process.env.AGENTBLAME_DEBUG) {
+        console.error(`[agentblame] Trace written: ${traceFile}`);
+      }
     }
 
     const data = JSON.parse(input);

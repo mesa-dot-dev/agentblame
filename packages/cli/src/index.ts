@@ -252,7 +252,10 @@ async function cleanupGlobalInstall(): Promise<{
 }
 
 async function runInit(initArgs: string[] = []): Promise<void> {
+  // TODO: map these CL switches to config value enum keys
   const forceCleanup = initArgs.includes("--force") || initArgs.includes("-f");
+  const traceHooks = initArgs.includes("--trace-hooks");
+  const storePromptContent = initArgs.includes("--store-prompt-content");
 
   // Check if Bun is installed (required for hooks)
   if (!isBunInstalled()) {
@@ -318,6 +321,11 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     setDatabasePath(dbPath);
     initDatabase();
     results.push({ name: "Database (.git/agentblame/)", success: true });
+    if (traceHooks || storePromptContent) {
+      await setConfig(repoRoot, 'traceHooks', traceHooks);
+      await setConfig(repoRoot, 'storePromptContent', storePromptContent);
+      results.push({ name: `Config values`, success: true });
+    }
   } catch (err) {
     results.push({ name: "Database", success: false });
   }
