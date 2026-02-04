@@ -121,19 +121,11 @@ Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
   agentblame init              Set up hooks for current repo
-  agentblame init --force      Also clean up old global install
   agentblame clean             Remove hooks from current repo
-  agentblame blame <file>      Show AI attribution for a file
-  agentblame blame --summary   Show summary only
-  agentblame blame --json      Output as JSON
-  agentblame blame --verbose   Show full prompts (not truncated)
+  agentblame blame <file>      Show AI attribution
   agentblame sync              Transfer notes after squash/rebase
-  agentblame config            Show all configuration
-  agentblame config set <key> <value>  Set a config value
+  agentblame config            Show/set configuration
   agentblame debug             Show detailed debug info
-
-Configuration Keys:
-  storePromptContent    Store actual prompt text (default: false)
 
 Examples:
   agentblame init
