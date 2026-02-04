@@ -322,8 +322,8 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     initDatabase();
     results.push({ name: "Database (.git/agentblame/)", success: true });
     if (traceHooks || storePromptContent) {
-      setConfig(repoRoot, 'traceHooks', traceHooks);
-      setConfig(repoRoot, 'storePromptContent', storePromptContent);
+      await setConfig(repoRoot, 'traceHooks', traceHooks);
+      await setConfig(repoRoot, 'storePromptContent', storePromptContent);
       results.push({ name: `Config values`, success: true });
     }
   } catch (err) {
