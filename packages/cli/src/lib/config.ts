@@ -13,10 +13,12 @@ import { runGit } from "./git/gitCli";
 export interface AgentBlameConfig {
   /** Whether to store actual prompt content (default: true) */
   storePromptContent: boolean;
+  traceHooks: boolean;
 }
 
 const CONFIG_DEFAULTS: AgentBlameConfig = {
   storePromptContent: false,  // Default: don't store prompt text (privacy-first)
+  traceHooks: false,          // don't leave debug trace files around unless user opts in
 };
 
 const CONFIG_PREFIX = "agentblame";

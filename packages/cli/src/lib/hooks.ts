@@ -786,3 +786,35 @@ export async function uninstallGitHubAction(repoRoot: string): Promise<boolean> 
     return false;
   }
 }
+
+
+/**
+ * Write a trace file and log entry
+ * @param agentblameDir - The .agentblame directory
+ * @param input - The raw input string to trace
+ * @returns The trace filename if written, null if tracing disabled
+ */
+export function writeHookTrace(repoRoot: string, input: string): string | null {
+
+  // Create traces directory if needed
+  const agentblameDir = path.join(repoRoot, ".agentblame");
+  const tracesDir = path.join(agentblameDir, "traces");
+  if (!fs.existsSync(tracesDir)) {
+    fs.mkdirSync(tracesDir, { recursive: true });
+  }
+
+  // Generate filename with timestamp
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `${timestamp}.json`;
+  const tracePath = path.join(tracesDir, filename);
+
+  // Write the trace file
+  fs.writeFileSync(tracePath, input, "utf8");
+
+  // Append to debug.log
+  const logPath = path.join(agentblameDir, "debug.log");
+  const logLine = `${new Date().toISOString()} ${filename}\n`;
+  fs.appendFileSync(logPath, logLine, "utf8");
+
+  return filename;
+}

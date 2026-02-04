@@ -253,6 +253,7 @@ async function cleanupGlobalInstall(): Promise<{
 
 async function runInit(initArgs: string[] = []): Promise<void> {
   const forceCleanup = initArgs.includes("--force") || initArgs.includes("-f");
+  const traceHooks = initArgs.includes("--trace-hooks");
 
   // Check if Bun is installed (required for hooks)
   if (!isBunInstalled()) {
