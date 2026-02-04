@@ -1,5 +1,5 @@
 /**
- * Agent Blame Chrome Extension Types
+ * Agent Blame Extension Types
  */
 
 // Minimum supported version

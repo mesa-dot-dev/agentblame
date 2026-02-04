@@ -6,6 +6,7 @@
 
 import type { GitNotesAttribution, LineAttribution } from "../types";
 import { MIN_SUPPORTED_VERSION } from "../types";
+import { api } from "../lib/browser";
 import { getToken, isEnabled } from "../lib/storage";
 import { GitHubAPI } from "../lib/githubApi";
 import {
@@ -25,7 +26,7 @@ import {
 } from "./githubDom";
 
 // State
-let api: GitHubAPI | null = null;
+let githubApi: GitHubAPI | null = null;
 let isProcessing = false;
 let hasProcessedSuccessfully = false;
 let wasOnFilesChangedTab = false;
@@ -91,7 +92,7 @@ async function init(): Promise<void> {
   log("Token found, initializing API client");
 
   // Initialize API client
-  api = new GitHubAPI(token);
+  githubApi = new GitHubAPI(token);
 
   // Process the page
   await processPage();
@@ -148,13 +149,13 @@ async function processPage(): Promise<void> {
     showLoading();
 
     // Get PR commits
-    if (!api) {
+    if (!githubApi) {
       log("API client not initialized");
       hideLoading();
       return;
     }
 
-    const commits = await api.getPRCommits(
+    const commits = await githubApi.getPRCommits(
       context.owner,
       context.repo,
       context.prNumber,
@@ -168,7 +169,7 @@ async function processPage(): Promise<void> {
     log(`Fetching notes for ${commits.length} commit(s)`);
 
     // Fetch notes for all commits
-    const notesResult = await api.fetchNotesForCommits(
+    const notesResult = await githubApi.fetchNotesForCommits(
       context.owner,
       context.repo,
       commits,
@@ -516,7 +517,7 @@ function setupNavigationListener(): void {
 /**
  * Listen for messages from popup
  */
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   log("Received message:", message.type);
   if (message.type === "SETTINGS_CHANGED") {
     if (message.enabled) {

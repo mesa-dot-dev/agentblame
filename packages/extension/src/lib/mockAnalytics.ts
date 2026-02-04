@@ -7,6 +7,7 @@
 
 import { getToken } from "./storage";
 import { MIN_SUPPORTED_VERSION } from "../types";
+import { api } from "./browser";
 
 // Set to true to enable mock data fallback for development/testing
 // Set to false for production to only show real analytics
@@ -121,9 +122,9 @@ async function getCachedAnalytics(owner: string, repo: string): Promise<Analytic
     return memCached.data;
   }
 
-  // Check chrome.storage.local
+  // Check api.storage.local
   try {
-    const stored = await chrome.storage.local.get(cacheKey);
+    const stored = await api.storage.local.get(cacheKey);
     if (stored[cacheKey]) {
       const cached = stored[cacheKey] as CachedAnalytics;
       if (Date.now() - cached.fetchedAt < CACHE_TTL) {
@@ -152,7 +153,7 @@ async function setCachedAnalytics(owner: string, repo: string, data: AnalyticsDa
 
   // Update storage cache
   try {
-    await chrome.storage.local.set({ [cacheKey]: cached });
+    await api.storage.local.set({ [cacheKey]: cached });
   } catch {
     // Storage write failed, memory cache still works
   }
@@ -169,7 +170,7 @@ export async function clearAnalyticsCache(owner: string, repo: string): Promise<
 
   // Clear storage cache
   try {
-    await chrome.storage.local.remove(cacheKey);
+    await api.storage.local.remove(cacheKey);
   } catch {
     // Storage access failed, memory cache still cleared
   }

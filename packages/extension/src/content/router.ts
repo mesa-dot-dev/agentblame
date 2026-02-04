@@ -9,6 +9,7 @@
  */
 
 import type { GitNotesAttribution, LineAttribution, PromptInfo } from "../types";
+import { api } from "../lib/browser";
 import { MIN_SUPPORTED_VERSION } from "../types";
 import { getToken, isEnabled } from "../lib/storage";
 import { GitHubAPI } from "../lib/githubApi";
@@ -50,7 +51,7 @@ function isPRPage(): boolean {
 // PR Attribution State & Logic
 // =============================================================================
 
-let api: GitHubAPI | null = null;
+let githubApi: GitHubAPI | null = null;
 let isProcessing = false;
 let hasProcessedSuccessfully = false;
 let wasOnFilesChangedTab = false;
@@ -67,7 +68,7 @@ async function initPRAttribution(): Promise<void> {
   if (!token) return;
 
   // Initialize API client
-  api = new GitHubAPI(token);
+  githubApi = new GitHubAPI(token);
 
   // Process the page
   await processPRPage();
@@ -102,12 +103,12 @@ async function processPRPage(): Promise<void> {
 
     showLoading();
 
-    if (!api) {
+    if (!githubApi) {
       hideLoading();
       return;
     }
 
-    const commits = await api.getPRCommits(
+    const commits = await githubApi.getPRCommits(
       context.owner,
       context.repo,
       context.prNumber,
@@ -117,7 +118,7 @@ async function processPRPage(): Promise<void> {
       return;
     }
 
-    const notesResult = await api.fetchNotesForCommits(
+    const notesResult = await githubApi.fetchNotesForCommits(
       context.owner,
       context.repo,
       commits,
@@ -472,7 +473,7 @@ function setupNavigationListener(): void {
 // Message Handling
 // =============================================================================
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "SETTINGS_CHANGED") {
     if (message.enabled) {
       handleNavigation();
