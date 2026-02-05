@@ -200,6 +200,7 @@ function buildAttributionMap(
 
   // Build prompt index map: sessionId:promptId -> P1, P2, etc.
   const promptIndexMap = new Map<string, string>();
+  const promptNumberMap = new Map<string, number>();
   let promptCounter = 1;
 
   for (const [_commitSha, note] of notes) {
@@ -213,6 +214,7 @@ function buildAttributionMap(
             if (!promptIndexMap.has(promptKey)) {
               const promptIdx = `P${promptCounter}`;
               promptIndexMap.set(promptKey, promptIdx);
+              promptNumberMap.set(promptKey, promptCounter);
               prompts.push({
                 index: promptIdx,
                 agent: session.agent,
@@ -229,6 +231,7 @@ function buildAttributionMap(
           if (!promptIndexMap.has(promptKey)) {
             const promptIdx = `P${promptCounter}`;
             promptIndexMap.set(promptKey, promptIdx);
+            promptNumberMap.set(promptKey, promptCounter);
             prompts.push({
               index: promptIdx,
               agent: session.agent,
@@ -256,6 +259,10 @@ function buildAttributionMap(
             promptContent = session.prompts;
           }
 
+          // Look up prompt number for this range
+          const promptKey = `${range.sessionId}:${range.promptId ?? "null"}`;
+          const promptNumber = promptNumberMap.get(promptKey);
+
           // Add entry for each line in the range
           for (let line = range.startLine; line <= range.endLine; line++) {
             const key = `${filePath}:${line}`;
@@ -265,6 +272,7 @@ function buildAttributionMap(
               model: session?.model || null,
               sessionId: range.sessionId,
               promptContent,
+              promptNumber,
             });
           }
         }
@@ -342,10 +350,10 @@ function setupPRObserver(): void {
           if (dominated > 10) return true;
           if (
             node.matches?.(
-              "[data-tagsearch-path], .file, .diff-table, [data-hpc], .js-diff-load-container, tr.diff-line-row",
+              '[data-tagsearch-path], .file, .diff-table, [data-hpc], .js-diff-load-container, tr.diff-line-row, [role="region"][id^="diff-"], [data-file-path]',
             ) ||
             node.querySelector?.(
-              "[data-tagsearch-path], .file, .diff-table, .blob-code-addition, tr.diff-line-row",
+              '[data-tagsearch-path], .file, .diff-table, .blob-code-addition, tr.diff-line-row, [role="region"][id^="diff-"], [data-file-path]',
             )
           ) {
             return true;

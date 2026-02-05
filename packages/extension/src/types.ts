@@ -92,6 +92,7 @@ export interface LineAttribution {
   model: string | null;
   sessionId?: string; // Session ID for lookup
   promptContent?: string; // Prompt text for tooltip display
+  promptNumber?: number; // Prompt number (1, 2, 3...) for gutter display
 }
 
 // Prompt info for PR summary display
