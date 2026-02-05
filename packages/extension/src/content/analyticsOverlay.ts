@@ -539,10 +539,11 @@ function renderStatsSection(analytics: AnalyticsData): string {
     ? Math.round((unknownLines / summary.totalLines) * 100)
     : 0;
 
-  // Commit to Prompt ratio
-  const ratio = summary.commits > 0 ? (summary.prompts / summary.commits).toFixed(1) : "0";
-  // Use distinct colors: blue (good) -> amber (medium) -> red (poor)
-  const ratioColor = parseFloat(ratio) <= 1.5 ? "#0969da" : parseFloat(ratio) <= 2.5 ? "#9a6700" : "#cf222e";
+  // Prompt efficiency: commits / prompts (higher = better, 1.0 = ideal)
+  const efficiency = summary.prompts > 0 ? (summary.commits / summary.prompts) : 0;
+  const efficiencyStr = efficiency > 0 ? efficiency.toFixed(2) : "0";
+  // Use distinct colors: blue (good) -> amber (medium) -> muted (poor)
+  const ratioColor = efficiency >= 0.67 ? "#539BF5" : efficiency >= 0.4 ? "#C69026" : "#8b949e";
 
   // Build tool breakdown
   const toolEntries = Object.entries(summary.tools || {})
@@ -554,124 +555,148 @@ function renderStatsSection(analytics: AnalyticsData): string {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 5);
 
-  // Distinct colors for each card type
-  const aiColor = "#b86540";      // Coral/orange
-  const humanColor = "#238636";   // Green
+  // Distinct colors for each card type (mid-tone, works on light & dark)
+  const aiColor = "#E07B53";      // Coral/orange
+  const humanColor = "#57AB5A";   // Green
   const unknownColor = "#8b949e"; // Gray
-  const totalColor = "#8957e5";   // Purple
+  const totalColor = "#A371F7";   // Purple
+
+  // Donut ring SVG helper (percentage as arc)
+  const donutRing = (percent: number, color: string, size: number = 56) => {
+    const r = (size - 6) / 2;
+    const circ = 2 * Math.PI * r;
+    const offset = circ - (percent / 100) * circ;
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform: rotate(-90deg);">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--color-border-default)" stroke-width="5" />
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${offset}" />
+    </svg>`;
+  };
+
+  // Stacked bar for AI vs Human split
+  const splitBar = `
+    <div style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; width: 100%; margin-top: 12px;">
+      <div style="width: ${aiPercent}%; background: ${aiColor};"></div>
+      <div style="width: ${humanPercent}%; background: ${humanColor};"></div>
+      ${unknownLines > 0 ? `<div style="width: ${unknownPercent}%; background: ${unknownColor};"></div>` : ''}
+    </div>
+  `;
 
   return `
-    <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-      <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-        <h3 class="Box-title f4">Summary</h3>
-      </div>
+    <!-- Summary Hero -->
+    <div class="Box mb-4">
       <div class="Box-body" style="padding: 24px;">
-        <!-- Main Stats Cards -->
-        <div class="d-flex gap-4 mb-4" style="flex-wrap: wrap;">
-          <!-- AI Written Card -->
-          <div class="flex-1" style="min-width: 130px; background: linear-gradient(135deg, ${aiColor}15, ${aiColor}05); border: 1px solid ${aiColor}30; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="font-size: 42px; font-weight: 700; color: ${aiColor}; line-height: 1;">${aiPercent}%</div>
-            <div class="f5 text-bold mt-1" style="color: ${aiColor};">AI-Generated</div>
-            <div class="f6 color-fg-muted mt-1">${summary.aiLines.toLocaleString()} lines</div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;">
+
+          <!-- AI-Generated -->
+          <div style="text-align: center;">
+            <div style="display: inline-block; position: relative;">
+              ${donutRing(aiPercent, aiColor)}
+              <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 15px; font-weight: 700; color: ${aiColor};">${aiPercent}%</span>
+              </div>
+            </div>
+            <div class="f5 text-bold mt-2" style="color: ${aiColor};">AI-Generated</div>
+            <div class="f6 color-fg-muted">${summary.aiLines.toLocaleString()} lines</div>
           </div>
 
-          <!-- Human Written Card -->
-          <div class="flex-1" style="min-width: 130px; background: linear-gradient(135deg, ${humanColor}15, ${humanColor}05); border: 1px solid ${humanColor}30; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="font-size: 42px; font-weight: 700; color: ${humanColor}; line-height: 1;">${humanPercent}%</div>
-            <div class="f5 text-bold mt-1" style="color: ${humanColor};">Human-Written</div>
-            <div class="f6 color-fg-muted mt-1">${summary.humanLines.toLocaleString()} lines</div>
+          <!-- Human-Written -->
+          <div style="text-align: center;">
+            <div style="display: inline-block; position: relative;">
+              ${donutRing(humanPercent, humanColor)}
+              <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 15px; font-weight: 700; color: ${humanColor};">${humanPercent}%</span>
+              </div>
+            </div>
+            <div class="f5 text-bold mt-2" style="color: ${humanColor};">Human-Written</div>
+            <div class="f6 color-fg-muted">${summary.humanLines.toLocaleString()} lines</div>
           </div>
 
-          <!-- Unknown Card (only show if there are unknown lines) -->
-          ${unknownLines > 0 ? `
-          <div class="flex-1" style="min-width: 130px; background: linear-gradient(135deg, ${unknownColor}15, ${unknownColor}05); border: 1px solid ${unknownColor}30; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="font-size: 42px; font-weight: 700; color: ${unknownColor}; line-height: 1;">${unknownPercent}%</div>
-            <div class="f5 text-bold mt-1" style="color: ${unknownColor};">Untracked</div>
-            <div class="f6 color-fg-muted mt-1">${unknownLines.toLocaleString()} lines</div>
-          </div>
-          ` : ''}
-
-          <!-- Total Lines Card -->
-          <div class="flex-1" style="min-width: 130px; background: linear-gradient(135deg, ${totalColor}15, ${totalColor}05); border: 1px solid ${totalColor}30; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="font-size: 42px; font-weight: 700; color: ${totalColor}; line-height: 1;">${summary.totalLines.toLocaleString()}</div>
-            <div class="f5 text-bold mt-1" style="color: ${totalColor};">Total Lines</div>
-            <div class="f6 color-fg-muted mt-1">tracked in repository</div>
+          <!-- Total Lines -->
+          <div style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <div style="font-size: 32px; font-weight: 800; color: ${totalColor}; line-height: 1; letter-spacing: -1px;">${summary.totalLines.toLocaleString()}</div>
+            <div class="f5 text-bold mt-2" style="color: ${totalColor};">Total Lines</div>
+            <div class="f6 color-fg-muted">tracked in repository</div>
           </div>
 
-          <!-- Commit:Prompt Ratio Card -->
-          <div class="flex-1" style="min-width: 130px; background: linear-gradient(135deg, ${ratioColor}15, ${ratioColor}05); border: 1px solid ${ratioColor}30; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="font-size: 42px; font-weight: 700; color: ${ratioColor}; line-height: 1;">1:${ratio}</div>
-            <div class="f5 text-bold mt-1" style="color: ${ratioColor};">Commit:Prompt</div>
-            <div class="f6 color-fg-muted mt-1">${summary.commits} commits, ${summary.prompts} prompts</div>
+          <!-- Prompt Efficiency -->
+          <div style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <div style="font-size: 32px; font-weight: 800; color: ${ratioColor}; line-height: 1; letter-spacing: -1px;">${efficiencyStr}</div>
+            <div class="f5 text-bold mt-2" style="color: ${ratioColor};">Prompt Efficiency</div>
+            <div class="f6 color-fg-muted">${summary.commits} commits · ${summary.prompts} prompts</div>
           </div>
+
         </div>
 
-        <!-- Breakdown Row -->
-        <div class="d-flex" style="flex-wrap: wrap; gap: 24px;">
-          <!-- Tool Breakdown -->
-          ${toolEntries.length > 0 ? (() => {
-            return `
-          <div style="flex: 1; background: var(--color-canvas-subtle); border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden; min-width: 300px;">
-            <div style="padding: 14px 20px; border-bottom: 1px solid var(--color-border-default);">
-              <h4 class="f5 text-bold m-0" style="color: var(--color-fg-default);">By Tool</h4>
-            </div>
-            <div style="padding: 20px; display: flex; flex-direction: column; gap: 18px;">
-              ${toolEntries.map(([name, lines], i) => {
-                const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
-                const color = TOOL_COLOR_PALETTE[i % TOOL_COLOR_PALETTE.length];
-                return `
-              <div>
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                  <span style="width: 12px; height: 12px; border-radius: 3px; background: ${color};"></span>
-                  <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-default);">${formatProviderName(name)}</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 12px;">
-                  <div style="flex: 1; height: 8px; background: var(--color-neutral-muted); border-radius: 4px; overflow: hidden;">
-                    <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 4px;"></div>
-                  </div>
-                  <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-default); min-width: 80px; text-align: right;">${lines.toLocaleString()} (${percent}%)</span>
-                </div>
-              </div>
-                `;
-              }).join('')}
-            </div>
+        <!-- Stacked split bar -->
+        ${splitBar}
+        <div class="d-flex flex-justify-between mt-1">
+          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${aiColor}; display: inline-block;"></span> AI ${aiPercent}%
           </div>
-            `;
-          })() : ''}
-
-          <!-- Model Breakdown -->
-          ${modelEntries.length > 0 ? (() => {
-            return `
-          <div style="flex: 1; background: var(--color-canvas-subtle); border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden; min-width: 300px;">
-            <div style="padding: 14px 20px; border-bottom: 1px solid var(--color-border-default);">
-              <h4 class="f5 text-bold m-0" style="color: var(--color-fg-default);">Top Models</h4>
-            </div>
-            <div style="padding: 20px; display: flex; flex-direction: column; gap: 18px;">
-              ${modelEntries.map(([name, lines], i) => {
-                const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
-                const color = TOOL_COLOR_PALETTE[(toolEntries.length + i) % TOOL_COLOR_PALETTE.length];
-                return `
-              <div>
-                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                  <span style="width: 12px; height: 12px; border-radius: 3px; background: ${color};"></span>
-                  <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-default);" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 12px;">
-                  <div style="flex: 1; height: 8px; background: var(--color-neutral-muted); border-radius: 4px; overflow: hidden;">
-                    <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 4px;"></div>
-                  </div>
-                  <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-default); min-width: 80px; text-align: right;">${lines.toLocaleString()} (${percent}%)</span>
-                </div>
-              </div>
-                `;
-              }).join('')}
-            </div>
+          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${humanColor}; display: inline-block;"></span> Human ${humanPercent}%
           </div>
-            `;
-          })() : ''}
+          ${unknownLines > 0 ? `
+          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${unknownColor}; display: inline-block;"></span> Untracked ${unknownPercent}%
+          </div>
+          ` : ''}
         </div>
       </div>
     </div>
+
+    <!-- Breakdown Cards Row -->
+    ${toolEntries.length > 0 || modelEntries.length > 0 ? `
+    <div class="mb-4" style="display: grid; grid-template-columns: ${toolEntries.length > 0 && modelEntries.length > 0 ? '1fr 1fr' : '1fr'}; gap: 16px;">
+      ${toolEntries.length > 0 ? `
+      <div class="Box">
+        <div class="Box-header">
+          <h3 class="Box-title f5">By Tool</h3>
+        </div>
+        <div>
+          ${toolEntries.map(([name, lines], i) => {
+            const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
+            const color = TOOL_COLOR_PALETTE[i % TOOL_COLOR_PALETTE.length];
+            return `
+          <div class="Box-row d-flex flex-items-center" style="gap: 10px; padding: 10px 16px;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+            <span class="f6 text-bold" style="width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${formatProviderName(name)}</span>
+            <div style="flex: 1; height: 6px; background: var(--color-neutral-muted); border-radius: 3px; overflow: hidden;">
+              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px;"></div>
+            </div>
+            <span class="f6 color-fg-muted" style="min-width: 75px; text-align: right; font-variant-numeric: tabular-nums;">${percent}% · ${lines.toLocaleString()}</span>
+          </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      ${modelEntries.length > 0 ? `
+      <div class="Box">
+        <div class="Box-header">
+          <h3 class="Box-title f5">Top Models</h3>
+        </div>
+        <div>
+          ${modelEntries.map(([name, lines], i) => {
+            const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
+            const color = TOOL_COLOR_PALETTE[(toolEntries.length + i) % TOOL_COLOR_PALETTE.length];
+            return `
+          <div class="Box-row d-flex flex-items-center" style="gap: 10px; padding: 10px 16px;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+            <span class="f6 text-bold" style="width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+            <div style="flex: 1; height: 6px; background: var(--color-neutral-muted); border-radius: 3px; overflow: hidden;">
+              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px;"></div>
+            </div>
+            <span class="f6 color-fg-muted" style="min-width: 75px; text-align: right; font-variant-numeric: tabular-nums;">${percent}% · ${lines.toLocaleString()}</span>
+          </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+      ` : ''}
+    </div>
+    ` : ''}
   `;
 }
 
@@ -716,114 +741,107 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
     label: m.displayName,
   }));
 
-  // Compute commit:prompt ratio trend
+  // Compute prompt efficiency trend (commits / prompts, higher = better)
   const ratioData = trendData.commits.map((c, i) =>
-    c > 0 ? trendData.prompts[i] / c : 0
+    trendData.prompts[i] > 0 ? c / trendData.prompts[i] : 0
   );
 
-  const aiColor = "#b86540";
-  const ratioColor = "#9a6700";
+  const aiColor = "#E07B53";
+  const ratioColor = "#C69026";
 
   return `
-    <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-      <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-        <h3 class="Box-title f4">Trends</h3>
+    <!-- AI Code Percentage -->
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f5">AI Code Percentage</h3>
+        <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
+          <span style="display: inline-block; width: 20px; height: 3px; background: ${aiColor}; border-radius: 2px;"></span>
+          AI %
+        </div>
       </div>
-      <div class="Box-body" style="padding: 24px;">
-        <!-- AI % Trend Chart -->
-        <div class="mb-4">
-          <div class="d-flex flex-justify-between flex-items-center mb-2">
-            <h4 class="f5 text-bold">AI Code Percentage</h4>
-            <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
-              <span style="display: inline-block; width: 20px; height: 3px; background: ${aiColor}; border-radius: 2px;"></span>
-              AI %
-            </div>
-          </div>
-          <div style="background: var(--color-canvas-subtle); border-radius: 8px; padding: 16px;">
-            ${renderTrendLine(trendData.aiPercent, aiColor, 700, 100, 0.15, "%")}
-            <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
-              <span>${trendData.labels[0] || ''}</span>
-              <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
-            </div>
-          </div>
+      <div class="Box-body">
+        ${renderTrendLine(trendData.aiPercent, aiColor, 700, 100, 0.15, "%")}
+        <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
+          <span>${trendData.labels[0] || ''}</span>
+          <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
         </div>
-
-        <!-- Commit:Prompt Ratio Trend Chart -->
-        <div class="mb-4">
-          <div class="d-flex flex-justify-between flex-items-center mb-2">
-            <h4 class="f5 text-bold">Prompt Efficiency</h4>
-            <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
-              <span style="display: inline-block; width: 20px; height: 3px; background: ${ratioColor}; border-radius: 2px;"></span>
-              Prompts per Commit (1.0 = ideal)
-            </div>
-          </div>
-          <div style="background: var(--color-canvas-subtle); border-radius: 8px; padding: 16px;">
-            ${ratioData.some(v => v > 0)
-              ? renderTrendLine(ratioData, ratioColor, 700, 100, 0.15, "")
-              : '<div class="text-center color-fg-muted f6 p-3">No ratio data for this period</div>'
-            }
-            <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
-              <span>${trendData.labels[0] || ''}</span>
-              <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tool Usage Trend Chart -->
-        ${toolColors.length > 0 ? `
-        <div class="mb-4">
-          <div class="d-flex flex-justify-between flex-items-center mb-2">
-            <h4 class="f5 text-bold">Tool Usage</h4>
-            <div class="d-flex flex-wrap gap-3 f6">
-              ${toolColors.map(t => `
-                <span class="d-flex flex-items-center gap-1">
-                  <span style="display: inline-block; width: 20px; height: 3px; background: ${t.color}; border-radius: 2px;"></span>
-                  ${t.displayName}
-                </span>
-              `).join('')}
-            </div>
-          </div>
-          <div style="background: var(--color-canvas-subtle); border-radius: 8px; padding: 16px;">
-            ${toolSeries.some(s => s.data.some(v => v > 0))
-              ? renderMultiTrendLine(toolSeries, 700, 100, " lines")
-              : '<div class="text-center color-fg-muted f6 p-3">No tool data for this period</div>'
-            }
-            <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
-              <span>${trendData.labels[0] || ''}</span>
-              <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
-            </div>
-          </div>
-        </div>
-        ` : ''}
-
-        <!-- Model Usage Trend Chart -->
-        ${modelColors.length > 0 ? `
-        <div>
-          <div class="d-flex flex-justify-between flex-items-center mb-2">
-            <h4 class="f5 text-bold">Model Usage</h4>
-            <div class="d-flex flex-wrap gap-3 f6">
-              ${modelColors.map(m => `
-                <span class="d-flex flex-items-center gap-1" title="${escapeHtml(m.name)}">
-                  <span style="display: inline-block; width: 20px; height: 3px; background: ${m.color}; border-radius: 2px;"></span>
-                  ${escapeHtml(m.displayName)}
-                </span>
-              `).join('')}
-            </div>
-          </div>
-          <div style="background: var(--color-canvas-subtle); border-radius: 8px; padding: 16px;">
-            ${modelSeries.some(s => s.data.some(v => v > 0))
-              ? renderMultiTrendLine(modelSeries, 700, 100, " lines")
-              : '<div class="text-center color-fg-muted f6 p-3">No model data for this period</div>'
-            }
-            <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
-              <span>${trendData.labels[0] || ''}</span>
-              <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
-            </div>
-          </div>
-        </div>
-        ` : ''}
       </div>
     </div>
+
+    <!-- Prompt Efficiency -->
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f5">Prompt Efficiency</h3>
+        <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
+          <span style="display: inline-block; width: 20px; height: 3px; background: ${ratioColor}; border-radius: 2px;"></span>
+          Commits per Prompt (1.0 = ideal)
+        </div>
+      </div>
+      <div class="Box-body">
+        ${ratioData.some(v => v > 0)
+          ? renderTrendLine(ratioData, ratioColor, 700, 100, 0.15, "")
+          : '<div class="text-center color-fg-muted f6 p-3">No ratio data for this period</div>'
+        }
+        <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
+          <span>${trendData.labels[0] || ''}</span>
+          <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tool Usage -->
+    ${toolColors.length > 0 ? `
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f5">Tool Usage</h3>
+        <div class="d-flex flex-wrap gap-3 f6">
+          ${toolColors.map(t => `
+            <span class="d-flex flex-items-center gap-1">
+              <span style="display: inline-block; width: 20px; height: 3px; background: ${t.color}; border-radius: 2px;"></span>
+              ${t.displayName}
+            </span>
+          `).join('')}
+        </div>
+      </div>
+      <div class="Box-body">
+        ${toolSeries.some(s => s.data.some(v => v > 0))
+          ? renderMultiTrendLine(toolSeries, 700, 100, " lines")
+          : '<div class="text-center color-fg-muted f6 p-3">No tool data for this period</div>'
+        }
+        <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
+          <span>${trendData.labels[0] || ''}</span>
+          <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+
+    <!-- Model Usage -->
+    ${modelColors.length > 0 ? `
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f5">Model Usage</h3>
+        <div class="d-flex flex-wrap gap-3 f6">
+          ${modelColors.map(m => `
+            <span class="d-flex flex-items-center gap-1" title="${escapeHtml(m.name)}">
+              <span style="display: inline-block; width: 20px; height: 3px; background: ${m.color}; border-radius: 2px;"></span>
+              ${escapeHtml(m.displayName)}
+            </span>
+          `).join('')}
+        </div>
+      </div>
+      <div class="Box-body">
+        ${modelSeries.some(s => s.data.some(v => v > 0))
+          ? renderMultiTrendLine(modelSeries, 700, 100, " lines")
+          : '<div class="text-center color-fg-muted f6 p-3">No model data for this period</div>'
+        }
+        <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
+          <span>${trendData.labels[0] || ''}</span>
+          <span>${trendData.labels[trendData.labels.length - 1] || ''}</span>
+        </div>
+      </div>
+    </div>
+    ` : ''}
   `;
 }
 
@@ -883,12 +901,7 @@ function renderTrendLine(
         <span class="f6 color-fg-muted" style="text-align: right;">${minLabel}</span>
       </div>
       <!-- Chart -->
-      <div style="flex: 1; position: relative;">
-        <!-- Grid lines -->
-        <div style="position: absolute; top: ${padding}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <div style="position: absolute; top: ${padding + chartHeight / 2}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <div style="position: absolute; bottom: ${padding}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <!-- SVG Chart -->
+      <div style="flex: 1;">
         <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" style="display: block;">
           <defs>
             <linearGradient id="gradient-${color.replace('#', '')}" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -896,9 +909,14 @@ function renderTrendLine(
               <stop offset="100%" style="stop-color:${color};stop-opacity:0" />
             </linearGradient>
           </defs>
+          <!-- Horizontal grid lines -->
+          <line x1="${padding}" y1="${padding}" x2="${chartWidth - padding}" y2="${padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <line x1="${padding}" y1="${padding + chartHeight / 2}" x2="${chartWidth - padding}" y2="${padding + chartHeight / 2}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <line x1="${padding}" y1="${height - padding}" x2="${chartWidth - padding}" y2="${height - padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <!-- Vertical grid lines -->
           ${[1, 2, 3, 4].map(i => {
             const x = padding + (i / 5) * (chartWidth - padding * 2);
-            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="var(--color-border-muted)" stroke-width="0.5" opacity="0.4" stroke-dasharray="3,3" />`;
+            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />`;
           }).join('\n          ')}
           <polygon points="${fillPoints}" fill="url(#gradient-${color.replace('#', '')})" />
           <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -964,16 +982,16 @@ function renderMultiTrendLine(
         <span class="f6 color-fg-muted" style="text-align: right;">${minLabel}</span>
       </div>
       <!-- Chart -->
-      <div style="flex: 1; position: relative;">
-        <!-- Grid lines -->
-        <div style="position: absolute; top: ${padding}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <div style="position: absolute; top: ${padding + chartHeight / 2}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <div style="position: absolute; bottom: ${padding}px; left: 0; right: 0; border-top: 1px dashed var(--color-border-muted); opacity: 0.5;"></div>
-        <!-- SVG Chart -->
+      <div style="flex: 1;">
         <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" style="display: block;">
+          <!-- Horizontal grid lines -->
+          <line x1="${padding}" y1="${padding}" x2="${chartWidth - padding}" y2="${padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <line x1="${padding}" y1="${padding + chartHeight / 2}" x2="${chartWidth - padding}" y2="${padding + chartHeight / 2}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <line x1="${padding}" y1="${height - padding}" x2="${chartWidth - padding}" y2="${height - padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />
+          <!-- Vertical grid lines -->
           ${[1, 2, 3, 4].map(i => {
             const x = padding + (i / 5) * (chartWidth - padding * 2);
-            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="var(--color-border-muted)" stroke-width="0.5" opacity="0.4" stroke-dasharray="3,3" />`;
+            return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${height - padding}" stroke="#8b949e" stroke-width="0.5" opacity="0.3" stroke-dasharray="3,3" />`;
           }).join('\n          ')}
           ${lines}
         </svg>
@@ -1101,9 +1119,9 @@ function renderContributorsSection(analytics: AnalyticsData): string {
 
   if (contributors.length === 0) {
     return `
-      <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-        <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-          <h3 class="Box-title f4">Contributors</h3>
+      <div class="Box mb-4">
+        <div class="Box-header">
+          <h3 class="Box-title f3">Contributors</h3>
         </div>
         <div class="Box-body">
           <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 6px; padding: 24px;">
@@ -1114,8 +1132,8 @@ function renderContributorsSection(analytics: AnalyticsData): string {
     `;
   }
 
-  const aiColor = "#b86540";
-  const humanColor = "#238636";
+  const aiColor = "#E07B53";
+  const humanColor = "#57AB5A";
 
   const rows = contributors
     .slice(0, 10)
@@ -1124,9 +1142,10 @@ function renderContributorsSection(analytics: AnalyticsData): string {
         c.totalLines > 0 ? Math.round((c.aiLines / c.totalLines) * 100) : 0;
       const humanPercent = 100 - aiPercent;
 
-      // Commit:Prompt ratio
-      const ratio = c.commits > 0 ? (c.prompts / c.commits).toFixed(1) : "0";
-      const ratioColor = parseFloat(ratio) <= 1.5 ? "#238636" : parseFloat(ratio) <= 2.5 ? "#9a6700" : "#b86540";
+      // Prompt efficiency: commits / prompts (higher = better)
+      const efficiency = c.prompts > 0 ? (c.commits / c.prompts) : 0;
+      const efficiencyStr = efficiency > 0 ? efficiency.toFixed(2) : "0";
+      const ratioColor = efficiency >= 0.67 ? "#57AB5A" : efficiency >= 0.4 ? "#C69026" : "#8b949e";
 
       // GitHub avatar URL - works for any username (not emails)
       const isEmail = c.username.includes('@');
@@ -1134,7 +1153,7 @@ function renderContributorsSection(analytics: AnalyticsData): string {
       const initial = c.username.charAt(0).toUpperCase();
 
       return `
-      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}" style="border-color: var(--color-border-muted);">
+      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}">
         <div style="width: 32px; height: 32px; flex-shrink: 0; position: relative;">
           ${!isEmail ? `
           <img
@@ -1160,7 +1179,7 @@ function renderContributorsSection(analytics: AnalyticsData): string {
           <span class="f6" style="width: 55px; color: ${aiColor}; font-weight: 600;">${aiPercent}% AI</span>
         </div>
         <div class="f6 text-center" style="min-width: 60px;">
-          <span class="text-bold" style="color: ${ratioColor};">1:${ratio}</span>
+          <span class="text-bold" style="color: ${ratioColor};">${efficiencyStr}</span>
         </div>
         <div class="f6 text-right" style="min-width: 80px;">
           <span class="text-bold">${c.totalLines.toLocaleString()}</span>
@@ -1172,9 +1191,9 @@ function renderContributorsSection(analytics: AnalyticsData): string {
     .join("");
 
   return `
-    <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-        <h3 class="Box-title f4">Contributors</h3>
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f3">Contributors</h3>
         <span class="Counter Counter--secondary">${contributors.length}</span>
       </div>
       <div style="max-height: 400px; overflow-y: auto;">
@@ -1201,9 +1220,9 @@ function renderPullRequestsSection(
 
   if (recentPRs.length === 0) {
     return `
-      <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-        <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-          <h3 class="Box-title f4">Recent Activity</h3>
+      <div class="Box mb-4">
+        <div class="Box-header">
+          <h3 class="Box-title f3">Recent Activity</h3>
         </div>
         <div class="Box-body">
           <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 6px; padding: 24px;">
@@ -1214,17 +1233,18 @@ function renderPullRequestsSection(
     `;
   }
 
-  const aiColor = "#b86540";
-  const humanColor = "#238636";
+  const aiColor = "#E07B53";
+  const humanColor = "#57AB5A";
 
   const rows = recentPRs
     .map((pr, index) => {
       const aiPercent = pr.added > 0 ? Math.round((pr.aiLines / pr.added) * 100) : 0;
       const humanPercent = 100 - aiPercent;
 
-      // Commit:Prompt ratio
-      const ratio = pr.commits > 0 ? (pr.prompts / pr.commits).toFixed(1) : "0";
-      const ratioColor = parseFloat(ratio) <= 1.5 ? "#238636" : parseFloat(ratio) <= 2.5 ? "#9a6700" : "#b86540";
+      // Prompt efficiency: commits / prompts (higher = better)
+      const efficiency = pr.prompts > 0 ? (pr.commits / pr.prompts) : 0;
+      const efficiencyStr = efficiency > 0 ? efficiency.toFixed(2) : "0";
+      const ratioColor = efficiency >= 0.67 ? "#57AB5A" : efficiency >= 0.4 ? "#C69026" : "#8b949e";
 
       // Badge color based on AI percentage
       let badgeColor = humanColor;
@@ -1233,7 +1253,7 @@ function renderPullRequestsSection(
         badgeColor = aiColor;
         badgeText = `${aiPercent}% AI`;
       } else if (aiPercent > 25) {
-        badgeColor = "#9a6700"; // Amber for mixed
+        badgeColor = "#C69026"; // Amber for mixed
         badgeText = `${aiPercent}% AI`;
       } else if (aiPercent > 0) {
         badgeColor = humanColor;
@@ -1243,7 +1263,7 @@ function renderPullRequestsSection(
       const dateStr = pr.date ? formatDate(pr.date).split(',')[0] : '';
 
       return `
-      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}" style="border-color: var(--color-border-muted);">
+      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}">
         <div style="min-width: 50px;">
           <a href="https://github.com/${owner}/${repo}/pull/${pr.pr}" class="Link--primary f6 text-bold" target="_blank">#${pr.pr}</a>
         </div>
@@ -1266,7 +1286,7 @@ function renderPullRequestsSection(
           </span>
         </div>
         <div class="f6 text-center" style="min-width: 50px;" title="${pr.commits} commits, ${pr.prompts} prompts">
-          <span style="color: ${ratioColor}; font-weight: 600;">1:${ratio}</span>
+          <span style="color: ${ratioColor}; font-weight: 600;">${efficiencyStr}</span>
         </div>
         <div class="f6 text-right color-fg-muted" style="min-width: 70px;">
           <span class="color-fg-success">+${pr.added}</span>
@@ -1279,9 +1299,9 @@ function renderPullRequestsSection(
     .join("");
 
   return `
-    <div class="Box mb-4" style="border: 1px solid var(--color-border-default); border-radius: 6px; overflow: hidden;">
-      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-default);">
-        <h3 class="Box-title f4">Recent Activity</h3>
+    <div class="Box mb-4">
+      <div class="Box-header d-flex flex-justify-between flex-items-center">
+        <h3 class="Box-title f3">Recent Activity</h3>
         <span class="Counter Counter--secondary">${recentPRs.length}</span>
       </div>
       <div style="max-height: 500px; overflow-y: auto;">

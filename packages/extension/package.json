@@ -1,6 +1,6 @@
 {
   "name": "@agentblame/extension",
-  "version": "3.0.3",
+  "version": "3.0.7",
   "description": "Agent Blame Extension - Shared source for Chrome and Firefox",
   "private": true,
   "devDependencies": {

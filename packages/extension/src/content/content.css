@@ -8,18 +8,40 @@
 /* Attribution gutter - orange left bar on AI-generated lines */
 /* Only AI-generated lines are marked - human lines have no marker (cleaner UI) */
 
-/* AI-generated lines marker - orange left border */
+/* AI-generated lines marker - thin orange bar with floating prompt badge */
 .ab-gutter-ai {
   position: relative;
-  box-shadow: inset 3px 0 0 0 var(--ab-ai-color) !important;
+  box-shadow: inset 4px 0 0 0 var(--ab-ai-color) !important;
   cursor: pointer;
+}
+
+/* Rounded-rect badge with prompt number, hugging the gutter bar */
+.ab-gutter-ai[data-prompt-num]::after {
+  content: attr(data-prompt-num);
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  padding: 0 2px 0 1px;
+  box-sizing: border-box;
+  font-size: 8px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: #fff;
+  background: var(--ab-ai-color);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* New GitHub UI (React) - ensure styling works */
 td.diff-line-number.ab-gutter-ai,
 [data-grid-cell-id].ab-gutter-ai {
   position: relative !important;
-  box-shadow: inset 3px 0 0 0 var(--ab-ai-color) !important;
+  box-shadow: inset 4px 0 0 0 var(--ab-ai-color) !important;
 }
 
 /* Prompt tooltip - appears on hover over orange gutter bar */
@@ -268,6 +290,9 @@ td.diff-line-number.ab-gutter-ai,
   font-size: 12px;
   font-weight: 500;
   border-radius: 12px;
+  order: 999;
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .ab-file-badge.high-ai {

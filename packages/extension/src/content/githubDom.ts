@@ -53,6 +53,7 @@ export function getDiffContainers(): HTMLElement[] {
     '[data-details-container-group="file"]', // Alternative structure
     ".js-file", // JS-enhanced file container
     "diff-layout", // New React-based diff component
+    '[role="region"][id^="diff-"]', // New GitHub UI (2026+)
   ];
 
   for (const selector of selectors) {
@@ -146,6 +147,12 @@ export function getFilePath(container: HTMLElement): string {
   const pathElement = container.querySelector("[data-tagsearch-path]");
   if (pathElement) {
     return pathElement.getAttribute("data-tagsearch-path") || "";
+  }
+
+  // New UI: data-file-path attribute on expand button
+  const filePathEl = container.querySelector("[data-file-path]");
+  if (filePathEl) {
+    return filePathEl.getAttribute("data-file-path") || "";
   }
 
   // Try to find path in file header link
@@ -414,7 +421,7 @@ function findNewLineNumberCell(element: HTMLElement): HTMLElement | null {
   if (!row) return null;
 
   // In unified view: two blob-num cells, we want the second one (new line number)
-  const lineNumCells = row.querySelectorAll('.blob-num, .diff-line-number');
+  const lineNumCells = row.querySelectorAll('.blob-num, .diff-line-number, .new-diff-line-number');
   if (lineNumCells.length >= 2) {
     return lineNumCells[1] as HTMLElement; // Second column = new line numbers
   }
@@ -422,7 +429,7 @@ function findNewLineNumberCell(element: HTMLElement): HTMLElement | null {
     return lineNumCells[0] as HTMLElement;
   }
 
-  // React UI fallback
+  // Fallback
   const diffLineNum = row.querySelector('[data-line-number]') as HTMLElement;
   return diffLineNum;
 }
@@ -460,6 +467,9 @@ export function injectMarker(
     if (attribution.promptContent) {
       lineNumCell.dataset.content = attribution.promptContent;
     }
+    if (attribution.promptNumber != null) {
+      lineNumCell.dataset.promptNum = String(attribution.promptNumber);
+    }
   }
 }
 
@@ -480,6 +490,7 @@ export function removeAllMarkers(): void {
       delete el.dataset.agent;
       delete el.dataset.model;
       delete el.dataset.content;
+      delete el.dataset.promptNum;
     }
   });
 
@@ -596,31 +607,13 @@ export function injectPRSummary(stats: {
   summary.className = "ab-pr-summary";
   summary.innerHTML = statsHtml;
 
-  // Strategy 1: Legacy UI - inject before the first .file container
-  const firstFileContainer = document.querySelector(".file");
-  if (firstFileContainer?.parentElement) {
-    firstFileContainer.parentElement.insertBefore(summary, firstFileContainer);
-    log("Injected PR summary banner (legacy UI - before .file)");
-    return;
+  const injectionPoint = findBannerInjectionPoint();
+  if (injectionPoint) {
+    injectionPoint.parent.insertBefore(summary, injectionPoint.before);
+    log("Injected PR summary banner");
+  } else {
+    log("Could not find injection point for PR summary banner");
   }
-
-  // Strategy 2: React UI - inject before [data-hpc] container
-  const hpc = document.querySelector("[data-hpc]");
-  if (hpc?.parentElement) {
-    hpc.parentElement.insertBefore(summary, hpc);
-    log("Injected PR summary banner (React UI - before [data-hpc])");
-    return;
-  }
-
-  // Strategy 3: Fallback - try #files_bucket or .pr-toolbar
-  const fallbackArea = document.querySelector("#files_bucket, .pr-toolbar, .pull-request-tab-content");
-  if (fallbackArea) {
-    fallbackArea.insertBefore(summary, fallbackArea.firstChild);
-    log("Injected PR summary banner (fallback)");
-    return;
-  }
-
-  log("Could not find injection point for PR summary banner");
 }
 
 /**
@@ -631,9 +624,41 @@ export function injectFileBadge(
   aiLines: number,
   totalLines: number,
 ): void {
-  const header = container.querySelector(
+  // Try to find header within the container (classic UI)
+  let header = container.querySelector(
     ".file-header, .file-info, [data-tagsearch-path]",
   );
+
+  // New UI: use the main header flex container (badge uses CSS order to appear at end)
+  if (!header) {
+    const filePathButton = container.querySelector("[data-file-path]");
+    if (filePathButton) {
+      header = filePathButton.closest('[class*="diff-file-header"]');
+    }
+  }
+
+  // Fallback: container is a <table> and the file header is a previous sibling
+  if (!header) {
+    let current: HTMLElement | null = container;
+    for (let depth = 0; depth < 5 && current && !header; depth++) {
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling instanceof HTMLElement) {
+          const nested = sibling.querySelector(
+            "[data-tagsearch-path], .file-header, .file-info, [data-file-path]",
+          );
+          if (nested) {
+            // For data-file-path, use its parent section as the header
+            const fp = nested.closest("[data-file-path]");
+            header = fp ? fp.parentElement : nested;
+            break;
+          }
+        }
+        sibling = sibling.previousElementSibling;
+      }
+      current = current.parentElement;
+    }
+  }
 
   if (!header || header.querySelector(".ab-file-badge")) {
     return;
@@ -679,31 +704,13 @@ export function showLoading(): void {
     </div>
   `;
 
-  // Strategy 1: Legacy UI - inject before the first .file container
-  const firstFileContainer = document.querySelector(".file");
-  if (firstFileContainer?.parentElement) {
-    firstFileContainer.parentElement.insertBefore(summary, firstFileContainer);
-    log("Injected PR summary loading banner (legacy UI - before .file)");
-    return;
+  const injectionPoint = findBannerInjectionPoint();
+  if (injectionPoint) {
+    injectionPoint.parent.insertBefore(summary, injectionPoint.before);
+    log("Injected PR summary loading banner");
+  } else {
+    log("Could not find injection point for PR summary loading banner");
   }
-
-  // Strategy 2: React UI - inject before [data-hpc] container
-  const hpc = document.querySelector("[data-hpc]");
-  if (hpc?.parentElement) {
-    hpc.parentElement.insertBefore(summary, hpc);
-    log("Injected PR summary loading banner (React UI - before [data-hpc])");
-    return;
-  }
-
-  // Strategy 3: Fallback - try #files_bucket or .pr-toolbar
-  const fallbackArea = document.querySelector("#files_bucket, .pr-toolbar, .pull-request-tab-content");
-  if (fallbackArea) {
-    fallbackArea.insertBefore(summary, fallbackArea.firstChild);
-    log("Injected PR summary loading banner (fallback)");
-    return;
-  }
-
-  log("Could not find injection point for PR summary loading banner");
 }
 
 /**
@@ -765,23 +772,41 @@ export function showError(message: string): void {
     </div>
   `;
 
-  // Try to inject at the same locations as showLoading
+  const injectionPoint = findBannerInjectionPoint();
+  if (injectionPoint) {
+    injectionPoint.parent.insertBefore(summary, injectionPoint.before);
+  }
+}
+
+/**
+ * Find an injection point for summary/loading banners
+ */
+function findBannerInjectionPoint(): { parent: Element; before: Element | null } | null {
+  // Strategy 1: Legacy UI - inject before the first .file container
   const firstFileContainer = document.querySelector(".file");
   if (firstFileContainer?.parentElement) {
-    firstFileContainer.parentElement.insertBefore(summary, firstFileContainer);
-    return;
+    return { parent: firstFileContainer.parentElement, before: firstFileContainer };
   }
 
+  // Strategy 2: New UI - inject before first file region
+  const firstNewUIContainer = document.querySelector('[role="region"][id^="diff-"]');
+  if (firstNewUIContainer?.parentElement) {
+    return { parent: firstNewUIContainer.parentElement, before: firstNewUIContainer };
+  }
+
+  // Strategy 3: React UI - inject before [data-hpc] container
   const hpc = document.querySelector("[data-hpc]");
   if (hpc?.parentElement) {
-    hpc.parentElement.insertBefore(summary, hpc);
-    return;
+    return { parent: hpc.parentElement, before: hpc };
   }
 
+  // Strategy 4: Fallback
   const fallbackArea = document.querySelector("#files_bucket, .pr-toolbar, .pull-request-tab-content");
   if (fallbackArea) {
-    fallbackArea.insertBefore(summary, fallbackArea.firstChild);
+    return { parent: fallbackArea, before: fallbackArea.firstChild as Element | null };
   }
+
+  return null;
 }
 
 /**
