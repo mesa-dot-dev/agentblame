@@ -98,14 +98,7 @@ interface ClaudePayload {
 interface OpenCodePayload {
   tool: "edit" | "write";
   sessionID?: string;
-  callID?: string;
   filePath?: string;
-  oldString?: string;
-  newString?: string;
-  before?: string;
-  after?: string;
-  diff?: string;
-  content?: string;
   model?: string;
   prompt?: string;
   hook_event?: "before" | "after";
@@ -738,6 +731,7 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
     conversationId,
   });
 
+  // Store prompt if provided
   if (payload.prompt) {
     const contentHash = hashPromptContent(payload.prompt);
     if (!promptExists(ctx.sessionId, contentHash)) {
@@ -749,8 +743,11 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
     }
   }
 
+  const hookEvent = payload.hook_event || "after";
+
   // Before hook: detect human edits and capture checkpoint
-  if (payload.hook_event === "before") {
+  // (Same flow as Claude PreToolUse)
+  if (hookEvent === "before") {
     await detectAndRecordHumanEdits(ctx, conversationId, filePath);
     await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
 
@@ -760,22 +757,21 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
     return;
   }
 
-  // After hook: record AI delta
+  // After hook: get before from checkpoint, after from disk, record delta
+  // (Same flow as Claude PostToolUse)
   const absolutePath = path.isAbsolute(filePath)
     ? filePath
     : path.join(ctx.repoRoot, filePath);
   const relativePath = makeRelative(ctx.repoRoot, absolutePath);
 
-  // Get before content (OpenCode may provide it directly)
-  let beforeContent: string | null = null;
-  if (payload.before) {
-    beforeContent = payload.before;
-  } else {
-    beforeContent = await getBeforeContent(ctx, conversationId, filePath);
-  }
+  const beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+  const afterContent = readFileContent(absolutePath);
 
-  // Get after content
-  const afterContent = payload.after ?? readFileContent(absolutePath);
+  if (process.env.AGENTBLAME_DEBUG) {
+    console.error(`[agentblame] OpenCode PostToolUse ${payload.tool}: ${relativePath}`);
+    console.error(`[agentblame]   beforeContent: ${beforeContent ? beforeContent.length + ' chars' : 'null'}`);
+    console.error(`[agentblame]   afterContent: ${afterContent ? afterContent.length + ' chars' : 'null'}`);
+  }
 
   if (afterContent) {
     await recordAIDelta(ctx, filePath, beforeContent, afterContent);
