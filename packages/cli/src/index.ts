@@ -311,6 +311,21 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   // Track results
   const results: { name: string; success: boolean }[] = [];
 
+  // Clean existing data (init always starts fresh)
+  const agentBlameGitDir = getAgentBlameGitDir(repoRoot);
+  try {
+    if (fs.existsSync(agentBlameGitDir)) {
+      await fs.promises.rm(agentBlameGitDir, { recursive: true });
+    }
+    // Also remove legacy .agentblame directory
+    const legacyDir = path.join(repoRoot, ".agentblame");
+    if (fs.existsSync(legacyDir)) {
+      await fs.promises.rm(legacyDir, { recursive: true });
+    }
+  } catch {
+    // Continue even if cleanup fails
+  }
+
   // Create .git/agentblame directory and initialize SQLite database
   try {
     ensureAgentBlameDirs(repoRoot);

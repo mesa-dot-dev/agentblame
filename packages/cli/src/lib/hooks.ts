@@ -59,53 +59,59 @@ function getHookCommand(
  */
 const OPENCODE_PLUGIN_TEMPLATE = `import type { Plugin } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
-import { readFileSync } from "fs"
 
-// Store the last user prompt per session for attaching to tool calls
+// Cache file paths from before hook (keyed by callID) so after hook can use them
+const callFiles = new Map<string, string>()
+
+// Store latest prompt and model per session from chat.message hook
 const sessionPrompts = new Map<string, string>()
+const sessionModels = new Map<string, string>()
 
-export default (async (ctx: any) => {
-  // Get model info (cached for performance)
-  let cachedModel: string | null = null
-  async function getModel(): Promise<string | null> {
-    if (cachedModel) return cachedModel
-    if (ctx?.client?.config?.providers) {
-      try {
-        const configResult = await ctx.client.config.providers()
-        const config = configResult?.data || configResult
-        const activeProvider = config?.connected?.[0]
-        if (activeProvider && config?.default?.[activeProvider]) {
-          const modelId = config.default[activeProvider]
-          const provider = config?.providers?.find((p: any) => p.id === activeProvider)
-          const modelInfo = provider?.models?.[modelId]
-          cachedModel = modelInfo?.name || modelId
-        }
-      } catch {
-        // Ignore config errors
-      }
+export default (async (ctx) => {
+  function capture(payload: any): void {
+    try {
+      execSync("agentblame capture --provider opencode", {
+        input: JSON.stringify(payload),
+        cwd: ctx.directory || process.cwd(),
+        stdio: ["pipe", "inherit", "inherit"],
+        timeout: 5000,
+      })
+    } catch {
+      // Silent failure - don't interrupt OpenCode
     }
-    return cachedModel
   }
 
   return {
-    // Capture user messages (prompts)
-    "message.updated": async (event: any) => {
+    // Capture user prompts and model info when a new message is created
+    // Fires BEFORE tool execution starts (verified from OpenCode source: prompt.ts line 1193)
+    //
+    // Signature from @opencode-ai/plugin Hooks interface:
+    //   (input: { sessionID, agent?, model?: { providerID, modelID }, messageID?, variant? },
+    //    output: { message: UserMessage, parts: Part[] }) => void
+    //
+    // UserMessage has { role, model, sessionID } but NO content field
+    // Content is in output.parts as Part objects: { type: "text", text: string, synthetic?: boolean }
+    "chat.message": async (input, output) => {
       try {
-        const message = event?.properties?.message
-        if (message?.role === "user" && message?.content) {
-          // Extract text content from message
-          let promptText: string | null = null
-          if (typeof message.content === "string") {
-            promptText = message.content
-          } else if (Array.isArray(message.content)) {
-            const textPart = message.content.find((p: any) => p.type === "text")
-            promptText = textPart?.text || null
-          }
+        const sessionID = input.sessionID
 
-          if (promptText) {
-            // Store prompt for the current session
-            const sessionId = event?.properties?.sessionID || "default"
-            sessionPrompts.set(sessionId, promptText)
+        // Capture model from message (always has the resolved model)
+        const message = output?.message
+        if (message?.model) {
+          sessionModels.set(sessionID, message.model.modelID || message.model.providerID)
+        }
+        // Fallback: model from input (may be undefined if user didn't specify)
+        if (!sessionModels.has(sessionID) && input.model) {
+          sessionModels.set(sessionID, input.model.modelID || input.model.providerID)
+        }
+
+        // Capture prompt text from parts (only for user messages)
+        if (message?.role === "user" && output?.parts) {
+          const textParts = output.parts
+            .filter((p: any) => p.type === "text" && p.text && !p.synthetic)
+            .map((p: any) => p.text)
+          if (textParts.length > 0) {
+            sessionPrompts.set(sessionID, textParts.join("\\n"))
           }
         }
       } catch {
@@ -113,102 +119,50 @@ export default (async (ctx: any) => {
       }
     },
 
-    // BULLETPROOF: Capture file state BEFORE edit
-    "tool.execute.before": async (input: any) => {
-      // Only capture edit and write tools
-      if (input?.tool !== "edit" && input?.tool !== "write") {
+    // Capture file state BEFORE edit (same as Claude PreToolUse)
+    // Signature: (input: { tool, sessionID, callID }, output: { args }) => void
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "edit" && input.tool !== "write") {
         return
       }
 
-      try {
-        const filePath = input?.args?.filePath
-        if (!filePath) return
+      const filePath = output?.args?.filePath
+      if (!filePath) return
 
-        // Send checkpoint to agentblame
-        const payload = {
-          tool: input.tool,
-          sessionID: input.sessionID,
-          callID: input.callID,
-          filePath,
-          hook_event: "before",
-        }
+      // Cache filePath so after hook can retrieve it (after hook has no args)
+      callFiles.set(input.callID, filePath)
 
-        execSync("agentblame capture --provider opencode", {
-          input: JSON.stringify(payload),
-          cwd: ctx?.directory || process.cwd(),
-          stdio: ["pipe", "inherit", "inherit"],
-          timeout: 5000,
-        })
-      } catch {
-        // Silent failure - don't interrupt OpenCode
-      }
+      capture({
+        tool: input.tool,
+        sessionID: input.sessionID,
+        filePath,
+        hook_event: "before",
+      })
     },
 
-    // Capture tool executions (edits/writes) AFTER completion
-    "tool.execute.after": async (input: any, output: any) => {
-      // Only capture edit and write tools
-      if (input?.tool !== "edit" && input?.tool !== "write") {
+    // Capture file state AFTER edit (same as Claude PostToolUse)
+    // Signature: (input: { tool, sessionID, callID }, output: { title, output, metadata }) => void
+    "tool.execute.after": async (input, output) => {
+      if (input.tool !== "edit" && input.tool !== "write") {
         return
       }
 
-      try {
-        const model = await getModel()
+      // Retrieve filePath cached from before hook
+      const filePath = callFiles.get(input.callID)
+      callFiles.delete(input.callID)
+      if (!filePath) return
 
-        // Build payload based on tool type
-        const payload: any = {
-          tool: input.tool,
-          sessionID: input.sessionID,
-          callID: input.callID,
-          hook_event: "after",
-        }
+      const model = sessionModels.get(input.sessionID)
+      const prompt = sessionPrompts.get(input.sessionID)
 
-        if (input.tool === "edit") {
-          // Edit tool: has before/after content in metadata
-          payload.filePath = output?.metadata?.filediff?.file || output?.args?.filePath
-          payload.oldString = output?.args?.oldString
-          payload.newString = output?.args?.newString
-          payload.before = output?.metadata?.filediff?.before
-          payload.after = output?.metadata?.filediff?.after
-          payload.diff = output?.metadata?.diff
-        } else if (input.tool === "write") {
-          // Write tool: has content in args
-          payload.filePath = output?.args?.filePath || output?.metadata?.filepath
-          payload.content = output?.args?.content
-        }
-
-        if (model) {
-          payload.model = model
-        }
-
-        // Attach the last user prompt for this session
-        const sessionId = input.sessionID || "default"
-        const prompt = sessionPrompts.get(sessionId)
-        if (prompt) {
-          payload.prompt = prompt
-        }
-
-        // Call agentblame capture with the payload
-        execSync("agentblame capture --provider opencode", {
-          input: JSON.stringify(payload),
-          cwd: ctx?.directory || process.cwd(),
-          stdio: ["pipe", "inherit", "inherit"],
-          timeout: 5000,
-        })
-      } catch {
-        // Silent failure - don't interrupt OpenCode
-      }
-    },
-
-    // Clean up session prompt cache when session ends
-    "session.deleted": async (event: any) => {
-      try {
-        const sessionId = event?.properties?.sessionID
-        if (sessionId) {
-          sessionPrompts.delete(sessionId)
-        }
-      } catch {
-        // Silent failure
-      }
+      capture({
+        tool: input.tool,
+        sessionID: input.sessionID,
+        filePath,
+        hook_event: "after",
+        ...(model && { model }),
+        ...(prompt && { prompt }),
+      })
     },
   }
 }) satisfies Plugin
