@@ -12,11 +12,17 @@ import { MIN_SUPPORTED_VERSION } from "../types";
 
 const API_BASE = "https://api.github.com";
 
-// Result type that includes version warning
+// Result type that includes version warning and diagnostic info
 export interface NotesResult {
   notes: Map<string, GitNotesAttribution>;
   hasUnsupportedVersions: boolean;
   unsupportedVersionsFound: number[];
+  // Diagnostic info for debugging
+  diagnostics: {
+    notesRefExists: boolean;
+    totalCommits: number;
+    commitsWithNotes: number;
+  };
 }
 
 // Debug logging - disabled in production
@@ -463,6 +469,11 @@ export class GitHubAPI {
         notes,
         hasUnsupportedVersions: false,
         unsupportedVersionsFound: [],
+        diagnostics: {
+          notesRefExists: true, // Must exist if we have cached notes
+          totalCommits: commits.length,
+          commitsWithNotes: notes.size,
+        },
       };
     }
 
@@ -475,6 +486,11 @@ export class GitHubAPI {
         notes,
         hasUnsupportedVersions: false,
         unsupportedVersionsFound: [],
+        diagnostics: {
+          notesRefExists: false,
+          totalCommits: commits.length,
+          commitsWithNotes: 0,
+        },
       };
     }
 
@@ -485,6 +501,11 @@ export class GitHubAPI {
         notes,
         hasUnsupportedVersions: false,
         unsupportedVersionsFound: [],
+        diagnostics: {
+          notesRefExists: true,
+          totalCommits: commits.length,
+          commitsWithNotes: 0,
+        },
       };
     }
 
@@ -523,6 +544,11 @@ export class GitHubAPI {
       notes,
       hasUnsupportedVersions: unsupportedVersionsFound.size > 0,
       unsupportedVersionsFound: Array.from(unsupportedVersionsFound),
+      diagnostics: {
+        notesRefExists: true,
+        totalCommits: commits.length,
+        commitsWithNotes: notes.size,
+      },
     };
   }
 

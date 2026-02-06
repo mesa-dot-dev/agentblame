@@ -331,6 +331,30 @@ td.diff-line-number.ab-gutter-ai,
   font-size: 13px;
 }
 
+/* Status/info state - muted informational style */
+.ab-pr-summary-status {
+  border-left-color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
+  border-color: var(--borderColor-default, var(--color-border-default, #d0d7de));
+}
+
+.ab-status-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
+}
+
+.ab-status-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ab-status-text {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .ab-loading-text {
   color: var(--fgColor-muted, var(--color-fg-muted, #57606a));
   font-size: 13px;
@@ -460,6 +484,16 @@ td.diff-line-number.ab-gutter-ai,
 
   .ab-error-text {
     color: var(--fgColor-attention, #d29922);
+  }
+
+  /* Status/info dark mode */
+  .ab-pr-summary-status {
+    border-left-color: var(--fgColor-muted, #8b949e);
+    border-color: var(--borderColor-default, #30363d);
+  }
+
+  .ab-status-info {
+    color: var(--fgColor-muted, #8b949e);
   }
 
   /* New layout dark mode */
