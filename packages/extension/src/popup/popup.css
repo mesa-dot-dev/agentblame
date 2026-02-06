@@ -299,6 +299,15 @@ header h1 {
   margin-bottom: 6px;
 }
 
+.token-help ul {
+  margin: 4px 0 4px 16px;
+  list-style: disc;
+}
+
+.token-help ul li {
+  margin-bottom: 2px;
+}
+
 .help-note {
   font-size: 11px;
   color: #57606a;

@@ -64,15 +64,20 @@
         <details>
           <summary>How to get a token</summary>
           <div class="token-help">
-            <p><strong>Classic Token (recommended):</strong></p>
+            <p><strong>Create a Fine-grained Token:</strong></p>
             <ol>
-              <li>Go to <a href="https://github.com/settings/tokens/new" target="_blank">GitHub Token Settings</a></li>
-              <li>Note: <code>Agent Blame</code></li>
-              <li>Select scope: <code>repo</code></li>
+              <li>Go to <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">GitHub Token Settings</a></li>
+              <li>Token name: <code>Agent Blame</code></li>
+              <li>Repository access: Select your repos</li>
+              <li>Permissions:
+                <ul>
+                  <li><strong>Contents</strong>: Read-only</li>
+                  <li><strong>Pull requests</strong>: Read-only</li>
+                </ul>
+              </li>
               <li>Generate and paste here</li>
             </ol>
-            <p class="help-note"><strong>Required permissions:</strong> Contents (read) + Pull requests (read)</p>
-            <p class="help-note">For org repos, use a Classic token with <code>repo</code> scope.</p>
+            <p class="help-note">For org repos: Ask your admin to enable fine-grained tokens, or use a <a href="https://github.com/settings/tokens/new" target="_blank">Classic token</a> with <code>repo</code> scope.</p>
           </div>
         </details>
       </section>
