@@ -30,7 +30,6 @@ import {
   isGitHookInstalled,
 } from "./lib/hooks";
 import { getRepoRoot, runGit } from "./lib/git/gitCli";
-import { configureNotesSync } from "./lib/git/gitConfig";
 import {
   initGlobalDatabase,
   getStats,
@@ -262,10 +261,6 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   const opencodeSuccess = await installOpenCodeHooks(repoRoot);
   results.push({ name: "OpenCode hooks (.opencode/)", success: opencodeSuccess });
-
-  // Configure notes sync
-  const notesPushSuccess = await configureNotesSync(repoRoot);
-  results.push({ name: "Notes auto-push config", success: notesPushSuccess });
 
   // Install GitHub Actions workflow
   const githubActionSuccess = await installGitHubAction(repoRoot);

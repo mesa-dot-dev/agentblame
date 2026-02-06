@@ -47,7 +47,14 @@ function getHookCommand(
   event?: string
 ): string {
   const eventArg = event ? ` --event ${event}` : "";
-  // Use bunx to run agentblame (cached, fast) - fail silently if bun not installed
+
+  // Cursor's shell has a bug where "command -v bunx && ..." breaks stdin piping.
+  // So for Cursor, we skip the check and just run bunx directly.
+  // For Claude, we keep the check since it works correctly there.
+  if (provider === "cursor") {
+    return `bunx @mesadev/agentblame capture --provider ${provider}${eventArg} 2>/dev/null || true`;
+  }
+
   return `command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame capture --provider ${provider}${eventArg} 2>/dev/null || true`;
 }
 
@@ -557,8 +564,12 @@ export async function installGitHookSmart(
 # Silently skips if bunx is not installed
 command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame process HEAD 2>/dev/null || true
 
-# Push notes to remote (silently fails if no notes or no remote)
-git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true`;
+# Push notes to remote - if successful, configure fetch refspec for auto-pull
+if git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null; then
+  # Add fetch refspec if not already configured (so notes auto-fetch on git pull)
+  git config --local --get-all remote.origin.fetch 2>/dev/null | grep -q 'refs/notes/agentblame' || \
+    git config --local --add remote.origin.fetch '+refs/notes/agentblame:refs/notes/agentblame' 2>/dev/null
+fi`;
 
     if (existingContent.trim()) {
       // Append to existing hook
@@ -591,8 +602,12 @@ export async function installGitHook(repoRoot: string): Promise<boolean> {
 # Silently skips if bunx is not installed
 command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame process HEAD 2>/dev/null || true
 
-# Push notes to remote (silently fails if no notes or no remote)
-git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
+# Push notes to remote - if successful, configure fetch refspec for auto-pull
+if git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null; then
+  # Add fetch refspec if not already configured (so notes auto-fetch on git pull)
+  git config --local --get-all remote.origin.fetch 2>/dev/null | grep -q 'refs/notes/agentblame' || \\
+    git config --local --add remote.origin.fetch '+refs/notes/agentblame:refs/notes/agentblame' 2>/dev/null
+fi
 `;
 
   try {

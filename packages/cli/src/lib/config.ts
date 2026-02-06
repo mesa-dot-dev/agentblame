@@ -11,12 +11,12 @@ import { runGit } from "./git/gitCli";
  * Configuration keys and their defaults
  */
 export interface AgentBlameConfig {
-  /** Whether to store actual prompt content (default: true) */
+  /** Whether to store actual prompt content (default: true). Set to false for privacy. */
   storePromptContent: boolean;
 }
 
 const CONFIG_DEFAULTS: AgentBlameConfig = {
-  storePromptContent: false,  // Default: don't store prompt text (privacy-first)
+  storePromptContent: true,  // Default: store prompt text for better attribution context
 };
 
 const CONFIG_PREFIX = "agentblame";

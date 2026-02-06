@@ -15,15 +15,30 @@ curl -fsSL https://bun.sh/install | bash
 
 ## Installation
 
+Use with bunx (recommended):
+```bash
+bunx @mesadev/agentblame@latest <command>
+```
+
+Or install globally:
 ```bash
 npm install -g @mesadev/agentblame
 ```
 
 ## Setup
 
-In your git repository:
+### 1. One-Time Machine Setup
+
+Run this once on your machine to create the local database:
 ```bash
-agentblame init
+bunx @mesadev/agentblame@latest setup
+```
+
+### 2. Repository Setup
+
+In each git repository you want to track:
+```bash
+bunx @mesadev/agentblame@latest init
 ```
 
 This sets up:
@@ -31,7 +46,7 @@ This sets up:
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-**Note:** Restart your editor after running this.
+**Note:** Restart your editor after running init.
 
 ## Usage
 
@@ -83,7 +98,8 @@ agentblame blame <file>
 ## CLI Commands
 
 ```bash
-agentblame init              # Set up hooks for current repo
+agentblame setup             # One-time machine setup (creates ~/.agentblame database)
+agentblame init              # Set up hooks and workflow for current repo
 agentblame clean             # Remove hooks from current repo
 agentblame blame <file>      # Show AI attribution
 agentblame sync              # Transfer notes after squash/rebase
@@ -94,9 +110,10 @@ agentblame debug             # Show detailed debug info
 ### Examples
 
 ```bash
-agentblame init
-agentblame blame src/index.ts
-agentblame config set storePromptContent true
+bunx @mesadev/agentblame@latest setup
+bunx @mesadev/agentblame@latest init
+bunx @mesadev/agentblame@latest blame src/index.ts
+bunx @mesadev/agentblame@latest config set storePromptContent true
 ```
 
 ## Chrome Extension
@@ -109,6 +126,7 @@ Get it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agen
 
 | Problem | Solution |
 |---------|----------|
+| Database not found | Run `bunx @mesadev/agentblame@latest setup` once on your machine |
 | Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
 | Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
