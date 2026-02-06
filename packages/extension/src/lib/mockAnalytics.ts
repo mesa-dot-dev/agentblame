@@ -35,6 +35,7 @@ export interface AnalyticsHistoryEntry {
   added: number;
   removed: number;
   aiLines: number;
+  humanLines: number;
   unknownLines: number;
   commits: number;
   prompts: number;
@@ -229,6 +230,7 @@ export const MOCK_ANALYTICS: AnalyticsData = {
       added: 450,
       removed: 50,
       aiLines: 280,
+      humanLines: 170,
       unknownLines: 0,
       commits: 2,
       prompts: 3,
@@ -241,6 +243,7 @@ export const MOCK_ANALYTICS: AnalyticsData = {
       added: 120,
       removed: 30,
       aiLines: 45,
+      humanLines: 75,
       unknownLines: 0,
       commits: 1,
       prompts: 2,
@@ -253,6 +256,7 @@ export const MOCK_ANALYTICS: AnalyticsData = {
       added: 80,
       removed: 20,
       aiLines: 0,
+      humanLines: 80,
       unknownLines: 0,
       commits: 1,
       prompts: 0,
@@ -265,6 +269,7 @@ export const MOCK_ANALYTICS: AnalyticsData = {
       added: 320,
       removed: 40,
       aiLines: 200,
+      humanLines: 120,
       unknownLines: 0,
       commits: 3,
       prompts: 5,
@@ -694,11 +699,26 @@ function normalizeHistory(history: unknown[] | undefined): AnalyticsHistoryEntry
     // Handle CLI format "mergedAt" vs Chrome format "date"
     const date = (e.date as string) || (e.mergedAt as string) || new Date().toISOString();
 
-    // Calculate added from aiLines + humanLines + unknownLines if not provided
+    // Calculate added and humanLines, handling backwards compatibility
     const aiLines = (e.aiLines as number) || 0;
-    const humanLines = (e.humanLines as number) || 0;
     const unknownLines = (e.unknownLines as number) || 0;
-    const added = (e.added as number) || (aiLines + humanLines + unknownLines);
+
+    // If added is provided, use it; otherwise compute from components
+    const rawAdded = e.added as number | undefined;
+    const rawHumanLines = e.humanLines as number | undefined;
+
+    // For backwards compatibility: if humanLines is missing but added exists,
+    // compute humanLines from the difference
+    let added: number;
+    let humanLines: number;
+
+    if (rawAdded !== undefined && rawAdded > 0) {
+      added = rawAdded;
+      humanLines = rawHumanLines ?? Math.max(0, added - aiLines - unknownLines);
+    } else {
+      humanLines = rawHumanLines || 0;
+      added = aiLines + humanLines + unknownLines;
+    }
 
     return {
       pr,
@@ -708,6 +728,7 @@ function normalizeHistory(history: unknown[] | undefined): AnalyticsHistoryEntry
       added,
       removed: (e.removed as number) || 0,
       aiLines,
+      humanLines,
       unknownLines,
       commits: (e.commits as number) || 0,
       prompts: (e.prompts as number) || 0,
