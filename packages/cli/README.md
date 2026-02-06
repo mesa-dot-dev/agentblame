@@ -1,6 +1,11 @@
-# Agent Blame
+# Agent Blame CLI
 
-Track AI-generated vs human-written code. Know what the AI wrote and focus your code reviews where it matters.
+**Know what the AI wrote. Focus your code reviews where it matters.**
+
+[![npm version](https://img.shields.io/npm/v/@mesadev/agentblame)](https://www.npmjs.com/package/@mesadev/agentblame)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/mesa-dot-dev/agentblame/blob/main/LICENSE)
+
+Track AI-generated vs human-written code in your Git history. Works with Cursor, Claude Code, and OpenCode.
 
 ## Prerequisites
 
@@ -13,19 +18,7 @@ Track AI-generated vs human-written code. Know what the AI wrote and focus your 
 curl -fsSL https://bun.sh/install | bash
 ```
 
-## Installation
-
-Use with bunx (recommended):
-```bash
-bunx @mesadev/agentblame@latest <command>
-```
-
-Or install globally:
-```bash
-npm install -g @mesadev/agentblame
-```
-
-## Setup
+## Quick Start
 
 ### 1. One-Time Machine Setup
 
@@ -41,47 +34,24 @@ In each git repository you want to track:
 bunx @mesadev/agentblame@latest init
 ```
 
-This sets up:
+This sets up everything automatically:
 - Editor hooks for Cursor, Claude Code, and OpenCode
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-**Note:** Restart your editor after running init.
+> **Important:** Restart your editor after running init.
 
-## Usage
+### 3. View Attribution
 
-1. Make AI edits in Cursor, Claude Code, or OpenCode
-2. Commit your changes (attribution attached automatically)
-```bash
-git commit -m "new python file"
-```
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                            Agent Blame v3                            │
-├──────────────────────────────────────────────────────────────────────┤
-│  Commit: 7bdf773b                                                    │
-│  Files: 1                                                            │
-├──────────────────────────────────────────────────────────────────────┤
-│  Sessions:                                                           │
-│    b4deb96e [cursor - gpt-5.2-codex]                                 │
-│      [P13] "Add a new file hello_world.py in python and a..."        │
-├──────────────────────────────────────────────────────────────────────┤
-│  Summary:                                                            │
-│  ██████████████████████████████████████████████████                  │
-│  AI:   2 lines (100%)    Human:   0 lines (  0%)                     │
-└──────────────────────────────────────────────────────────────────────┘ 
-```
-
-3. View attribution:
+Make AI edits, commit, then view attribution:
 
 ```bash
-agentblame blame <file>
+bunx @mesadev/agentblame@latest blame src/auth.ts
 ```
 
-### Example Output
-
+Example output:
 ```
-  python/hello_world.py
+  src/auth.ts
   ──────────────────────────────────────────────────────────────────────
   Prompts:
   [P1] Cursor (gpt-5.2-codex)
@@ -95,46 +65,68 @@ agentblame blame <file>
   AI: 2 lines (100%)  │  Human: 0 lines (0%)
 ```
 
-## CLI Commands
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `bunx @mesadev/agentblame@latest setup` | One-time machine setup (creates ~/.agentblame database) |
+| `bunx @mesadev/agentblame@latest init` | Set up hooks and GitHub Actions workflow for a repo |
+| `bunx @mesadev/agentblame@latest clean` | Remove hooks from current repo |
+| `bunx @mesadev/agentblame@latest blame <file>` | Show AI attribution for a file |
+| `bunx @mesadev/agentblame@latest sync` | Transfer notes after squash/rebase |
+| `bunx @mesadev/agentblame@latest config` | Show/set configuration |
+| `bunx @mesadev/agentblame@latest debug` | Show detailed debug info |
+
+### Configuration
 
 ```bash
-agentblame setup             # One-time machine setup (creates ~/.agentblame database)
-agentblame init              # Set up hooks and workflow for current repo
-agentblame clean             # Remove hooks from current repo
-agentblame blame <file>      # Show AI attribution
-agentblame sync              # Transfer notes after squash/rebase
-agentblame config            # Show/set configuration
-agentblame debug             # Show detailed debug info
+# Show current config
+bunx @mesadev/agentblame@latest config
+
+# Disable prompt content storage (enabled by default)
+bunx @mesadev/agentblame@latest config storePromptContent false
 ```
 
-### Examples
+## How It Works
 
-```bash
-bunx @mesadev/agentblame@latest setup
-bunx @mesadev/agentblame@latest init
-bunx @mesadev/agentblame@latest blame src/index.ts
-bunx @mesadev/agentblame@latest config set storePromptContent true
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Cursor/Claude  │────▶│   Git Hooks     │────▶│    Database     │
+│   Code edits    │     │  capture edits  │     │  stores pending │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  CLI/Extension  │◀────│   Git Notes     │◀────│  Git Commit     │
+│  show markers   │     │  store metadata │     │  triggers match │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-## Chrome Extension
-
-See AI markers on GitHub PRs with our Chrome extension.
-
-Get it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-blame/ofldnnppeiicgpmpgkbmipbcnhnbgccp) or the [GitHub repository](https://github.com/mesa-dot-dev/agentblame#chrome-extension).
+1. **Hooks** intercept edits from AI coding tools
+2. **Database** stores pending attributions with content hashes
+3. **Commit** triggers matching of committed lines to pending edits
+4. **Git Notes** attach attribution metadata to commits
+5. **CLI/Extension** read notes to display markers
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | Database not found | Run `bunx @mesadev/agentblame@latest setup` once on your machine |
-| Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
+| Hooks not capturing | Restart your editor; run `bunx @mesadev/agentblame@latest debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
-| Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
+| Squash merge lost attribution | Ensure workflow is committed; run `bunx @mesadev/agentblame@latest sync` locally |
 | Bun not found | Install Bun: `curl -fsSL https://bun.sh/install \| bash` |
+
+## Browser Extensions
+
+See AI attribution directly on GitHub PRs:
+- [Chrome Web Store](https://chromewebstore.google.com/detail/agent-blame/ofldnnppeiicgpmpgkbmipbcnhnbgccp)
+- [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/agentblame/)
 
 ## More Information
 
-For full documentation, Chrome extension installation, and contributing guidelines, visit the [GitHub repository](https://github.com/mesa-dot-dev/agentblame).
+For full documentation, contributing guidelines, and source code, visit the [GitHub repository](https://github.com/mesa-dot-dev/agentblame).
 
 ## License
 

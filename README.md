@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/2vvEJFrCHV)
 
-[Quick Start](#quick-start) | [Chrome Extension](#chrome-extension-features) | [CLI Reference](#cli-reference) | [Squash & Merge Support](#squash--merge-support)
+[Quick Start](#quick-start) | [Browser Extensions](#browser-extensions) | [CLI Reference](#cli-reference) | [How It Works](#how-it-works)
 <br>
 
 <img src="docs/github-view.png" alt="Agent Blame showing AI attribution on a GitHub PR" width="700">
@@ -26,7 +26,7 @@
 Agent Blame tracks AI-generated code in your Git history:
 
 - **CLI** - See which lines were written by AI in any file
-- **Chrome Extension** - View AI markers directly on GitHub PRs
+- **Browser Extension** - View AI markers directly on GitHub PRs (Chrome & Firefox)
 - **Automatic** - Works silently with Cursor, Claude Code, and OpenCode
 - **Squash-Safe** - Attribution survives squash and rebase merges
 
@@ -76,54 +76,37 @@ This sets up everything automatically for your repository:
 
 ---
 
-### 2. Commit the Workflow
+### 3. Commit the Config Files
 
-In order preserve attribution across when squash merging you need a custom [GitHub Actions workflow](.github/workflows/agentblame.yml).
-You can either copy + paste that into your own repo or rely on the init command to do it for you.
+Commit the generated config files so your team gets the hooks:
 
 ```bash
-git add .github/workflows/agentblame.yml
-git commit -m "Add Agent Blame workflow for squash/merge support"
+git add .cursor/ .claude/ .opencode/ .github/
+git commit -m "Add Agent Blame hooks and workflow"
 git push
-```
-
-When you merge a PR with squash/rebase, the original commits are replaced with new ones. The GitHub Actions workflow automatically:
-
-1. Detects the merge type (squash, rebase, or regular merge)
-2. Retrieves attribution data from the original PR commits
-3. Transfers attribution to the new merge commit(s)
-4. Pushes the updated notes to the repository
-
-If you do not want to use a workflow you can manually sync attribution after pulling a squash merge locally:
-
-```bash
-git pull origin main
-agentblame sync
 ```
 
 ---
 
-### 3. Install Chrome Extension
+### 4. Install Browser Extension
 
 See AI attribution directly on GitHub Pull Requests.
 
-**Option A: Chrome Web Store (Recommended)**
+- **Chrome** - [Chrome Web Store](https://chromewebstore.google.com/detail/agent-blame/ofldnnppeiicgpmpgkbmipbcnhnbgccp)
+- **Firefox** - [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/agentblame/)
 
-1. Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-blame/ofldnnppeiicgpmpgkbmipbcnhnbgccp)
-2. Click the extension icon and add your [GitHub token](https://github.com/settings/tokens) (needs `repo` scope)
-
-**Option B: Manual Install**
-
-1. Download `agentblame-chrome.zip` from [Releases](https://github.com/mesa-dot-dev/agentblame/releases)
-2. Go to `chrome://extensions` and enable **Developer mode**
-3. Click **Load unpacked** and select the extracted folder
-4. Click the extension icon and add your [GitHub token](https://github.com/settings/tokens) (needs `repo` scope)
+After installing, click the extension icon and add your GitHub token.
 
 **GitHub Token**
-You can use either GitHub's Fine Grained Tokens (recommended) or the classic tokens.
-1. For Fine Grained Tokens it needs to have access to your repo with the `contents` scope
+
+You can use either Fine Grained Tokens (recommended) or Classic Tokens:
+
+| Token Type | Where to Create | Required Scope |
+|------------|-----------------|----------------|
+| Fine Grained (recommended) | [Settings → Fine-grained tokens](https://github.com/settings/tokens?type=beta) | `contents: read` for your repo |
+| Classic | [Settings → Tokens (classic)](https://github.com/settings/tokens) | `repo` scope |
+
 ![Fine Grained Token Scope](docs/token-permissions.png)
-2. For classic tokens you need to check the `repo` scopes
 
 <br>
 
@@ -133,12 +116,12 @@ You can use either GitHub's Fine Grained Tokens (recommended) or the classic tok
 
 ---
 
-### 4. View Attribution
+### 5. View Attribution
 
 Make AI edits, commit, then view attribution in CLI or GitHub PRs:
 
 ```bash
-agentblame blame src/auth.ts
+bunx @mesadev/agentblame@latest blame src/auth.ts
 ```
 
 <br>
@@ -149,7 +132,7 @@ agentblame blame src/auth.ts
 
 ---
 
-## Chrome Extension Features
+## Browser Extensions
 
 ### PR Attribution
 
@@ -184,17 +167,15 @@ Full repository-wide analytics, accessible from the **Insights** sidebar on any 
 
 ## CLI Reference
 
-Run with `bunx @mesadev/agentblame@latest <command>` or install globally with `npm install -g @mesadev/agentblame`.
-
 | Command | Description |
 |---------|-------------|
-| `agentblame setup` | One-time machine setup (creates ~/.agentblame database) |
-| `agentblame init` | Set up hooks and GitHub Actions workflow for a repo |
-| `agentblame clean` | Remove hooks from current repo |
-| `agentblame blame <file>` | Show AI attribution for a file |
-| `agentblame sync` | Transfer notes after squash/rebase |
-| `agentblame config` | Show/set configuration |
-| `agentblame debug` | Show detailed debug info |
+| `bunx @mesadev/agentblame@latest setup` | One-time machine setup (creates ~/.agentblame database) |
+| `bunx @mesadev/agentblame@latest init` | Set up hooks and GitHub Actions workflow for a repo |
+| `bunx @mesadev/agentblame@latest clean` | Remove hooks from current repo |
+| `bunx @mesadev/agentblame@latest blame <file>` | Show AI attribution for a file |
+| `bunx @mesadev/agentblame@latest sync` | Transfer notes after squash/rebase |
+| `bunx @mesadev/agentblame@latest config` | Show/set configuration |
+| `bunx @mesadev/agentblame@latest debug` | Show detailed debug info |
 
 ---
 
@@ -208,7 +189,7 @@ Run with `bunx @mesadev/agentblame@latest <command>` or install globally with `n
                                                         │
                                                         ▼
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   CLI/Chrome    │◀────│   Git Notes     │◀────│  Git Commit     │
+│  CLI/Extension  │◀────│   Git Notes     │◀────│  Git Commit     │
 │  show markers   │     │  store metadata │     │  triggers match │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
@@ -227,9 +208,9 @@ Run with `bunx @mesadev/agentblame@latest <command>` or install globally with `n
 | Problem | Solution |
 |---------|----------|
 | Database not found | Run `bunx @mesadev/agentblame@latest setup` once on your machine |
-| Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
+| Hooks not capturing | Restart your editor; run `bunx @mesadev/agentblame@latest debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
-| Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
+| Squash merge lost attribution | Ensure workflow is committed; run `bunx @mesadev/agentblame@latest sync` locally |
 | Bun not found | Install Bun: `curl -fsSL https://bun.sh/install \| bash` |
 
 ---
@@ -254,7 +235,8 @@ bun run build
 ```bash
 bun run build            # Build all
 bun run build:cli        # Build CLI only
-bun run build:chrome     # Build Chrome extension only
+bun run build:chrome     # Build Chrome extension
+bun run build:firefox    # Build Firefox extension
 bun run dev <command>    # Run CLI in dev mode (from packages/cli)
 bun run fmt              # Format code
 bun run lint             # Lint code
@@ -265,15 +247,10 @@ bun run lint             # Lint code
 ```
 agentblame/
 ├── packages/
-│   ├── cli/              # CLI tool
-│   │   └── src/
-│   │       ├── lib/      # Core utilities
-│   │       ├── capture.ts
-│   │       ├── blame.ts
-│   │       ├── sync.ts
-│   │       ├── post-merge.ts
-│   │       └── index.ts
-│   └── chrome/           # Chrome extension
+│   ├── cli/              # CLI tool (@mesadev/agentblame)
+│   ├── extension/        # Shared browser extension source
+│   ├── chrome/           # Chrome extension build
+│   └── firefox/          # Firefox extension build
 └── docs/                 # Documentation
 ```
 
@@ -291,9 +268,8 @@ Contributions welcome! Here's what we'd love help with:
 - Support for other coding agents
   - VSCode / Copilot
   - Windsurf
-  - Antigravity
+  - Zed
   - and more!
-- Multi-browser extension support
 - Support for JJ VCS
 ---
 
