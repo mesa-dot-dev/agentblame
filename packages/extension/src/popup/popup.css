@@ -295,6 +295,20 @@ header h1 {
   font-size: 11px;
 }
 
+.token-help p {
+  margin-bottom: 6px;
+}
+
+.help-note {
+  font-size: 11px;
+  color: #57606a;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #fff8c5;
+  border-radius: 4px;
+  border-left: 3px solid #d4a72c;
+}
+
 /* Footer */
 footer {
   display: flex;
