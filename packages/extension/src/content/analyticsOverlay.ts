@@ -607,24 +607,22 @@ function renderStatsSection(analytics: AnalyticsData): string {
     </div>
 
     <!-- Distribution Bar -->
-    <div class="Box mb-4">
-      <div class="Box-body" style="padding: 16px 20px;">
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="flex: 1;">
-            <div style="display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--color-canvas-subtle);">
-              <div style="width: ${aiPercent}%; background: ${aiColor}; transition: width 0.3s ease;"></div>
-              <div style="width: ${humanPercent}%; background: ${humanColor}; transition: width 0.3s ease;"></div>
-            </div>
+    <div class="mb-4" style="background: var(--color-canvas-default); border: 1px solid var(--color-border-default); border-radius: 12px; padding: 16px 20px;">
+      <div style="display: flex; align-items: center; gap: 20px;">
+        <div style="flex: 1;">
+          <div style="display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--color-canvas-subtle); box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);">
+            <div style="width: ${aiPercent}%; background: linear-gradient(180deg, ${aiColor} 0%, ${aiColor}dd 100%); transition: width 0.3s ease;"></div>
+            <div style="width: ${humanPercent}%; background: linear-gradient(180deg, ${humanColor} 0%, ${humanColor}dd 100%); transition: width 0.3s ease;"></div>
           </div>
-          <div style="display: flex; gap: 16px; flex-shrink: 0;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="width: 10px; height: 10px; border-radius: 3px; background: ${aiColor};"></span>
-              <span style="font-size: 12px; color: var(--color-fg-muted);">AI ${aiPercent}%</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="width: 10px; height: 10px; border-radius: 3px; background: ${humanColor};"></span>
-              <span style="font-size: 12px; color: var(--color-fg-muted);">Human ${humanPercent}%</span>
-            </div>
+        </div>
+        <div style="display: flex; gap: 20px; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="width: 12px; height: 12px; border-radius: 4px; background: ${aiColor};"></span>
+            <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-default);">AI <span style="color: var(--color-fg-muted);">${aiPercent}%</span></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="width: 12px; height: 12px; border-radius: 4px; background: ${humanColor};"></span>
+            <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-default);">Human <span style="color: var(--color-fg-muted);">${humanPercent}%</span></span>
           </div>
         </div>
       </div>
@@ -634,8 +632,11 @@ function renderStatsSection(analytics: AnalyticsData): string {
     ${toolEntries.length > 0 || modelEntries.length > 0 ? `
     <div class="mb-4" style="display: grid; grid-template-columns: ${toolEntries.length > 0 && modelEntries.length > 0 ? '1fr 1fr' : '1fr'}; gap: 16px;">
       ${toolEntries.length > 0 ? `
-      <div class="Box">
-        <div class="Box-header">
+      <div class="Box" style="border-radius: 12px; overflow: hidden;">
+        <div class="Box-header d-flex flex-items-center gap-2" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M5.433 2.304A4.492 4.492 0 0 0 3.5 6c0 1.598.832 3.002 2.09 3.802.518.328.929.923.902 1.64v.008l-.164 3.337a.75.75 0 1 1-1.498-.073l.163-3.33c.002-.085-.05-.216-.207-.316A5.996 5.996 0 0 1 2 6a5.993 5.993 0 0 1 2.567-4.92 1.482 1.482 0 0 1 1.673-.04c.462.296.76.827.76 1.423v2.82c0 .082.041.16.11.206l.47.303a.25.25 0 0 0 .27-.003l.397-.273a.25.25 0 0 1 .288.003l.397.273a.25.25 0 0 0 .27.003l.469-.303a.25.25 0 0 0 .11-.206v-2.82c0-.596.298-1.127.76-1.423a1.482 1.482 0 0 1 1.673.04A5.993 5.993 0 0 1 14 6a5.996 5.996 0 0 1-2.786 5.068c-.157.1-.209.23-.207.315l.163 3.33a.75.75 0 0 1-1.498.074l-.164-3.345c-.027-.717.384-1.312.902-1.64A4.495 4.495 0 0 0 12.5 6a4.492 4.492 0 0 0-1.933-3.696c-.024.017-.067.067-.067.159v2.82c0 .455-.23.879-.605 1.122l-.47.303a1.75 1.75 0 0 1-1.89.02l-.397-.272-.397.273a1.75 1.75 0 0 1-1.89-.02l-.47-.303A1.319 1.319 0 0 1 5.5 5.283v-2.82c0-.092-.043-.142-.067-.159Z"></path>
+          </svg>
           <h3 class="Box-title f5">By Tool</h3>
         </div>
         <div>
@@ -643,11 +644,11 @@ function renderStatsSection(analytics: AnalyticsData): string {
             const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
             const color = TOOL_COLOR_PALETTE[i % TOOL_COLOR_PALETTE.length];
             return `
-          <div class="Box-row d-flex flex-items-center" style="gap: 10px; padding: 10px 16px;">
-            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+          <div class="d-flex flex-items-center" style="gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--color-border-muted); transition: background 0.15s ease;" onmouseover="this.style.background='var(--color-canvas-subtle)'" onmouseout="this.style.background='transparent'">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
             <span class="f6 text-bold" style="width: 90px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${formatProviderName(name)}</span>
             <div style="flex: 1; height: 6px; background: var(--color-neutral-muted); border-radius: 3px; overflow: hidden;">
-              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px;"></div>
+              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px; transition: width 0.3s ease;"></div>
             </div>
             <span class="f6 color-fg-muted" style="min-width: 75px; text-align: right; font-variant-numeric: tabular-nums;">${percent}% · ${lines.toLocaleString()}</span>
           </div>
@@ -658,8 +659,11 @@ function renderStatsSection(analytics: AnalyticsData): string {
       ` : ''}
 
       ${modelEntries.length > 0 ? `
-      <div class="Box">
-        <div class="Box-header">
+      <div class="Box" style="border-radius: 12px; overflow: hidden;">
+        <div class="Box-header d-flex flex-items-center gap-2" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"></path>
+          </svg>
           <h3 class="Box-title f5">Top Models</h3>
         </div>
         <div>
@@ -667,11 +671,11 @@ function renderStatsSection(analytics: AnalyticsData): string {
             const percent = summary.aiLines > 0 ? Math.round((lines / summary.aiLines) * 100) : 0;
             const color = TOOL_COLOR_PALETTE[(toolEntries.length + i) % TOOL_COLOR_PALETTE.length];
             return `
-          <div class="Box-row d-flex flex-items-center" style="gap: 10px; padding: 10px 16px;">
-            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+          <div class="d-flex flex-items-center" style="gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--color-border-muted); transition: background 0.15s ease;" onmouseover="this.style.background='var(--color-canvas-subtle)'" onmouseout="this.style.background='transparent'">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
             <span class="f6 text-bold" style="width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
             <div style="flex: 1; height: 6px; background: var(--color-neutral-muted); border-radius: 3px; overflow: hidden;">
-              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px;"></div>
+              <div style="width: ${percent}%; height: 100%; background: ${color}; border-radius: 3px; transition: width 0.3s ease;"></div>
             </div>
             <span class="f6 color-fg-muted" style="min-width: 75px; text-align: right; font-variant-numeric: tabular-nums;">${percent}% · ${lines.toLocaleString()}</span>
           </div>
@@ -736,15 +740,20 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
 
   return `
     <!-- AI Code Percentage -->
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f5">AI Code Percentage</h3>
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm7.25-4.5a.75.75 0 0 0-1.5 0v5.19l-2.22-2.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.69V3.5Z"></path>
+          </svg>
+          AI Code Percentage
+        </h3>
         <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
           <span style="display: inline-block; width: 20px; height: 3px; background: ${aiColor}; border-radius: 2px;"></span>
           AI %
         </div>
       </div>
-      <div class="Box-body">
+      <div class="Box-body" style="padding: 16px;">
         ${renderTrendLine(trendData.aiPercent, aiColor, 700, 100, 0.15, "%")}
         <div class="d-flex flex-justify-between f6 color-fg-muted mt-2" style="padding: 0 4px 0 53px;">
           <span>${trendData.labels[0] || ''}</span>
@@ -754,15 +763,20 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
     </div>
 
     <!-- Prompt Efficiency -->
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f5">Prompt Efficiency</h3>
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm5.024 3.457 4.5-4.143a.75.75 0 0 0-1.016-1.103l-4.5 4.143a.75.75 0 0 0 1.016 1.103Z"></path>
+          </svg>
+          Prompt Efficiency
+        </h3>
         <div class="d-flex flex-items-center gap-2 f6 color-fg-muted">
           <span style="display: inline-block; width: 20px; height: 3px; background: ${ratioColor}; border-radius: 2px;"></span>
           Commits per Prompt (1.0 = ideal)
         </div>
       </div>
-      <div class="Box-body">
+      <div class="Box-body" style="padding: 16px;">
         ${ratioData.some(v => v > 0)
           ? renderTrendLine(ratioData, ratioColor, 700, 100, 0.15, "")
           : '<div class="text-center color-fg-muted f6 p-3">No ratio data for this period</div>'
@@ -776,10 +790,15 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
 
     <!-- Tool Usage -->
     ${toolColors.length > 0 ? `
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f5">Tool Usage</h3>
-        <div class="d-flex flex-wrap gap-3 f6">
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M5.433 2.304A4.492 4.492 0 0 0 3.5 6c0 1.598.832 3.002 2.09 3.802.518.328.929.923.902 1.64v.008l-.164 3.337a.75.75 0 1 1-1.498-.073l.163-3.33c.002-.085-.05-.216-.207-.316A5.996 5.996 0 0 1 2 6a5.993 5.993 0 0 1 2.567-4.92 1.482 1.482 0 0 1 1.673-.04c.462.296.76.827.76 1.423v2.82c0 .082.041.16.11.206l.47.303a.25.25 0 0 0 .27-.003l.397-.273a.25.25 0 0 1 .288.003l.397.273a.25.25 0 0 0 .27.003l.469-.303a.25.25 0 0 0 .11-.206v-2.82c0-.596.298-1.127.76-1.423a1.482 1.482 0 0 1 1.673.04A5.993 5.993 0 0 1 14 6a5.996 5.996 0 0 1-2.786 5.068c-.157.1-.209.23-.207.315l.163 3.33a.75.75 0 0 1-1.498.074l-.164-3.345c-.027-.717.384-1.312.902-1.64A4.495 4.495 0 0 0 12.5 6a4.492 4.492 0 0 0-1.933-3.696c-.024.017-.067.067-.067.159v2.82c0 .455-.23.879-.605 1.122l-.47.303a1.75 1.75 0 0 1-1.89.02l-.397-.272-.397.273a1.75 1.75 0 0 1-1.89-.02l-.47-.303A1.319 1.319 0 0 1 5.5 5.283v-2.82c0-.092-.043-.142-.067-.159Z"></path>
+          </svg>
+          Tool Usage
+        </h3>
+        <div class="d-flex flex-wrap gap-3 f6 color-fg-muted">
           ${toolColors.map(t => `
             <span class="d-flex flex-items-center gap-1">
               <span style="display: inline-block; width: 20px; height: 3px; background: ${t.color}; border-radius: 2px;"></span>
@@ -788,7 +807,7 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
           `).join('')}
         </div>
       </div>
-      <div class="Box-body">
+      <div class="Box-body" style="padding: 16px;">
         ${toolSeries.some(s => s.data.some(v => v > 0))
           ? renderMultiTrendLine(toolSeries, 700, 100, " lines")
           : '<div class="text-center color-fg-muted f6 p-3">No tool data for this period</div>'
@@ -803,10 +822,15 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
 
     <!-- Model Usage -->
     ${modelColors.length > 0 ? `
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f5">Model Usage</h3>
-        <div class="d-flex flex-wrap gap-3 f6">
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z"></path>
+          </svg>
+          Model Usage
+        </h3>
+        <div class="d-flex flex-wrap gap-3 f6 color-fg-muted">
           ${modelColors.map(m => `
             <span class="d-flex flex-items-center gap-1" title="${escapeHtml(m.name)}">
               <span style="display: inline-block; width: 20px; height: 3px; background: ${m.color}; border-radius: 2px;"></span>
@@ -815,7 +839,7 @@ function renderTrendSection(filteredAnalytics: AnalyticsData, fullAnalytics: Ana
           `).join('')}
         </div>
       </div>
-      <div class="Box-body">
+      <div class="Box-body" style="padding: 16px;">
         ${modelSeries.some(s => s.data.some(v => v > 0))
           ? renderMultiTrendLine(modelSeries, 700, 100, " lines")
           : '<div class="text-center color-fg-muted f6 p-3">No model data for this period</div>'
@@ -1104,12 +1128,17 @@ function renderContributorsSection(analytics: AnalyticsData): string {
 
   if (contributors.length === 0) {
     return `
-      <div class="Box mb-4">
-        <div class="Box-header">
-          <h3 class="Box-title f3">Contributors</h3>
+      <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+        <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+          <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+              <path d="M2 5.5a3.5 3.5 0 1 1 5.898 2.549 5.508 5.508 0 0 1 3.034 4.084.75.75 0 1 1-1.482.235 4.001 4.001 0 0 0-6.9 0 .75.75 0 0 1-1.482-.236A5.507 5.507 0 0 1 3.102 8.05 3.493 3.493 0 0 1 2 5.5zM11 4a3.001 3.001 0 0 1 2.22 5.018 5.01 5.01 0 0 1 2.56 3.012.749.749 0 0 1-.885.954.752.752 0 0 1-.549-.514 3.507 3.507 0 0 0-2.522-2.372.75.75 0 0 1-.574-.73v-.352a.75.75 0 0 1 .416-.672A1.5 1.5 0 0 0 11 5.5.75.75 0 0 1 11 4zm-5.5-.5a2 2 0 1 0-.001 3.999A2 2 0 0 0 5.5 3.5z"></path>
+            </svg>
+            Contributors
+          </h3>
         </div>
         <div class="Box-body">
-          <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 6px; padding: 24px;">
+          <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 8px; padding: 24px;">
             <p class="color-fg-muted f6">No contributor data available for this period.</p>
           </div>
         </div>
@@ -1138,26 +1167,26 @@ function renderContributorsSection(analytics: AnalyticsData): string {
       const initial = c.username.charAt(0).toUpperCase();
 
       return `
-      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}">
-        <div style="width: 32px; height: 32px; flex-shrink: 0; position: relative;">
+      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}" style="transition: background 0.15s ease;" onmouseover="this.style.background='var(--color-canvas-subtle)'" onmouseout="this.style.background='transparent'">
+        <div style="width: 36px; height: 36px; flex-shrink: 0; position: relative;">
           ${!isEmail ? `
           <img
             src="${avatarUrl}"
             alt="${escapeHtml(c.username)}"
             class="ab-avatar-img"
-            style="width: 32px; height: 32px; border-radius: 50%; background: var(--color-canvas-subtle); position: absolute; top: 0; left: 0;"
+            style="width: 36px; height: 36px; border-radius: 50%; background: var(--color-canvas-subtle); position: absolute; top: 0; left: 0; border: 2px solid var(--color-border-muted);"
           />
           ` : ''}
-          <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--color-canvas-subtle); ${isEmail ? 'display: flex' : 'display: none'}; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: var(--color-fg-muted);">
+          <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--color-canvas-subtle) 0%, var(--color-neutral-muted) 100%); ${isEmail ? 'display: flex' : 'display: none'}; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: var(--color-fg-muted); border: 2px solid var(--color-border-muted);">
             ${escapeHtml(initial)}
           </div>
         </div>
-        <div style="min-width: 120px; flex-shrink: 0;">
+        <div style="min-width: 130px; flex-shrink: 0;">
           <a href="https://github.com/${escapeHtml(c.username)}" class="Link--primary text-bold f6" target="_blank">${escapeHtml(c.username)}</a>
-          <div class="f6 color-fg-muted">${c.prs} PRs, ${c.commits} commits</div>
+          <div class="f6 color-fg-muted">${c.prs} PRs · ${c.commits} commits</div>
         </div>
         <div class="flex-1 d-flex flex-items-center gap-3">
-          <div class="d-flex flex-1 rounded-2 overflow-hidden" style="height: 8px; max-width: 150px; background: var(--color-canvas-subtle);">
+          <div class="d-flex flex-1 overflow-hidden" style="height: 8px; max-width: 150px; background: var(--color-canvas-subtle); border-radius: 4px;">
             <div style="width: ${aiPercent}%; background: ${aiColor}; transition: width 0.3s ease;"></div>
             <div style="width: ${humanPercent}%; background: ${humanColor}; transition: width 0.3s ease;"></div>
           </div>
@@ -1176,16 +1205,21 @@ function renderContributorsSection(analytics: AnalyticsData): string {
     .join("");
 
   return `
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f3">Contributors</h3>
-        <span class="Counter Counter--secondary">${contributors.length}</span>
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M2 5.5a3.5 3.5 0 1 1 5.898 2.549 5.508 5.508 0 0 1 3.034 4.084.75.75 0 1 1-1.482.235 4.001 4.001 0 0 0-6.9 0 .75.75 0 0 1-1.482-.236A5.507 5.507 0 0 1 3.102 8.05 3.493 3.493 0 0 1 2 5.5zM11 4a3.001 3.001 0 0 1 2.22 5.018 5.01 5.01 0 0 1 2.56 3.012.749.749 0 0 1-.885.954.752.752 0 0 1-.549-.514 3.507 3.507 0 0 0-2.522-2.372.75.75 0 0 1-.574-.73v-.352a.75.75 0 0 1 .416-.672A1.5 1.5 0 0 0 11 5.5.75.75 0 0 1 11 4zm-5.5-.5a2 2 0 1 0-.001 3.999A2 2 0 0 0 5.5 3.5z"></path>
+          </svg>
+          Contributors
+        </h3>
+        <span class="Counter Counter--secondary" style="border-radius: 10px;">${contributors.length}</span>
       </div>
       <div style="max-height: 400px; overflow-y: auto;">
         ${rows}
       </div>
       ${contributors.length > 10 ? `
-      <div class="Box-footer text-center f6 color-fg-muted" style="background: var(--color-canvas-subtle); border-top: 1px solid var(--color-border-default); padding: 12px;">
+      <div class="Box-footer text-center f6 color-fg-muted" style="background: var(--color-canvas-subtle); border-top: 1px solid var(--color-border-muted); padding: 12px;">
         Showing top 10 of ${contributors.length} contributors
       </div>
       ` : ''}
@@ -1205,12 +1239,17 @@ function renderPullRequestsSection(
 
   if (recentPRs.length === 0) {
     return `
-      <div class="Box mb-4">
-        <div class="Box-header">
-          <h3 class="Box-title f3">Recent Activity</h3>
+      <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+        <div class="Box-header" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+          <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+              <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"></path>
+            </svg>
+            Recent Activity
+          </h3>
         </div>
         <div class="Box-body">
-          <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 6px; padding: 24px;">
+          <div class="blankslate" style="border: 1px dashed var(--color-border-default); border-radius: 8px; padding: 24px;">
             <p class="color-fg-muted f6">No activity data available for this period.</p>
           </div>
         </div>
@@ -1248,9 +1287,9 @@ function renderPullRequestsSection(
       const dateStr = pr.date ? formatDate(pr.date).split(',')[0] : '';
 
       return `
-      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}">
-        <div style="min-width: 50px;">
-          <a href="https://github.com/${owner}/${repo}/pull/${pr.pr}" class="Link--primary f6 text-bold" target="_blank">#${pr.pr}</a>
+      <div class="d-flex flex-items-center gap-3 py-3 px-3 ${index > 0 ? 'border-top' : ''}" style="transition: background 0.15s ease;" onmouseover="this.style.background='var(--color-canvas-subtle)'" onmouseout="this.style.background='transparent'">
+        <div style="min-width: 55px;">
+          <a href="https://github.com/${owner}/${repo}/pull/${pr.pr}" class="Link--primary f6 text-bold" target="_blank" style="font-variant-numeric: tabular-nums;">#${pr.pr}</a>
         </div>
         <div class="flex-1" style="min-width: 0;">
           <a href="https://github.com/${owner}/${repo}/pull/${pr.pr}" class="Link--primary f6 d-block text-truncate" target="_blank" title="${escapeHtml(pr.title || `PR #${pr.pr}`)}">
@@ -1258,24 +1297,24 @@ function renderPullRequestsSection(
           </a>
           <div class="f6 color-fg-muted d-flex gap-2">
             <span>${escapeHtml(pr.author)}</span>
-            ${dateStr ? `<span>•</span><span>${dateStr}</span>` : ''}
+            ${dateStr ? `<span>·</span><span>${dateStr}</span>` : ''}
           </div>
         </div>
         <div class="d-flex flex-items-center gap-2" style="min-width: 140px;">
-          <div class="d-flex rounded-2 overflow-hidden" style="width: 60px; height: 6px; background: var(--color-canvas-subtle);">
+          <div class="d-flex overflow-hidden" style="width: 60px; height: 6px; background: var(--color-canvas-subtle); border-radius: 3px;">
             <div style="width: ${aiPercent}%; background: ${aiColor};"></div>
             <div style="width: ${humanPercent}%; background: ${humanColor};"></div>
           </div>
-          <span class="Label f6" style="background: ${badgeColor}20; color: ${badgeColor}; border: 1px solid ${badgeColor}40; min-width: 55px; text-align: center;">
+          <span class="f6" style="background: ${badgeColor}15; color: ${badgeColor}; border-radius: 12px; padding: 2px 8px; font-weight: 600; min-width: 60px; text-align: center; font-size: 11px;">
             ${badgeText}
           </span>
         </div>
         <div class="f6 text-center" style="min-width: 50px;" title="${pr.commits} commits, ${pr.prompts} prompts">
           <span style="color: ${ratioColor}; font-weight: 600;">${efficiencyStr}</span>
         </div>
-        <div class="f6 text-right color-fg-muted" style="min-width: 70px;">
+        <div class="f6 text-right" style="min-width: 75px; font-variant-numeric: tabular-nums;">
           <span class="color-fg-success">+${pr.added}</span>
-          <span>/</span>
+          <span class="color-fg-muted">/</span>
           <span class="color-fg-danger">-${pr.removed}</span>
         </div>
       </div>
@@ -1284,10 +1323,15 @@ function renderPullRequestsSection(
     .join("");
 
   return `
-    <div class="Box mb-4">
-      <div class="Box-header d-flex flex-justify-between flex-items-center">
-        <h3 class="Box-title f3">Recent Activity</h3>
-        <span class="Counter Counter--secondary">${recentPRs.length}</span>
+    <div class="Box mb-4" style="border-radius: 12px; overflow: hidden;">
+      <div class="Box-header d-flex flex-justify-between flex-items-center" style="background: var(--color-canvas-subtle); border-bottom: 1px solid var(--color-border-muted);">
+        <h3 class="Box-title f5 d-flex flex-items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="color-fg-muted">
+            <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"></path>
+          </svg>
+          Recent Activity
+        </h3>
+        <span class="Counter Counter--secondary" style="border-radius: 10px;">${recentPRs.length}</span>
       </div>
       <div style="max-height: 500px; overflow-y: auto;">
         ${rows}
