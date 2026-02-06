@@ -92,6 +92,13 @@ export class GitHubAPI {
   }
 
   /**
+   * Get the last error (for checking after API calls)
+   */
+  getLastError(): NotesResult["error"] | null {
+    return this.lastError;
+  }
+
+  /**
    * Make an authenticated API request with timeout
    */
   private async fetch<T>(
@@ -117,6 +124,7 @@ export class GitHubAPI {
       if (!response.ok) {
         if (response.status === 404) {
           log(`Not found (404): ${endpoint}`);
+          this.setError("unknown", "Resource not found (404) - check permissions");
           return null;
         }
         if (response.status === 429) {
@@ -622,19 +630,28 @@ export class GitHubAPI {
     baseRef: string,
     headRef: string,
   ): Promise<string[]> {
+    // Validate refs - don't make API call with empty/invalid refs
+    if (!baseRef || !headRef || baseRef === headRef) {
+      log(`Invalid refs: base="${baseRef}" head="${headRef}"`);
+      return [];
+    }
+
     log(`Comparing ${baseRef}...${headRef} in ${owner}/${repo}`);
 
-    // Handle forked repos - headRef might be "username:branch"
-    // The compare API accepts this format directly
+    // Note: Don't encode the whole path, just construct it properly
+    // The compare API format is /compare/{base}...{head}
+    const compareUrl = `/repos/${owner}/${repo}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`;
+    log(`Compare URL: ${compareUrl}`);
+
     const response = await this.fetch<{
       commits: Array<{ sha: string }>;
       status: string;
       ahead_by: number;
       behind_by: number;
-    }>(`/repos/${owner}/${repo}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`);
+    }>(compareUrl);
 
     if (!response) {
-      log("No compare response from API");
+      log("No compare response from API (branch may be deleted)");
       return [];
     }
 

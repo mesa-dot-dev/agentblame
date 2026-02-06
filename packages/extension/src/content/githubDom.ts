@@ -41,52 +41,61 @@ export function extractPRContext(): PRContext | null {
  * Used for compare API to avoid needing Pull Requests permission
  */
 function extractBaseHeadRefs(): { baseRef?: string; headRef?: string } {
-  // Strategy 1: Look for commit-ref spans (common GitHub UI pattern)
-  // Format: "base-repo:base-branch ... head-repo:head-branch" or just "branch"
-  const commitRefs = document.querySelectorAll(".commit-ref");
-  if (commitRefs.length >= 2) {
-    const baseRef = commitRefs[0].textContent?.trim();
-    const headRef = commitRefs[1].textContent?.trim();
+  // Strategy 1: Look for specific base-ref and head-ref classes (most reliable)
+  const baseRefElement = document.querySelector(".base-ref .css-truncate-target, .base-ref");
+  const headRefElement = document.querySelector(".head-ref .css-truncate-target, .head-ref");
+  if (baseRefElement && headRefElement) {
+    const baseRef = baseRefElement.textContent?.trim();
+    const headRef = headRefElement.textContent?.trim();
     if (baseRef && headRef) {
+      log(`Found refs via base-ref/head-ref classes: ${baseRef}...${headRef}`);
       return { baseRef, headRef };
     }
   }
 
-  // Strategy 2: Look for the compare range in the page
-  // GitHub shows "base...head" in various places
-  const compareRange = document.querySelector("[data-pjax='#repo-content-pjax-container']");
-  if (compareRange) {
-    const href = compareRange.getAttribute("href");
-    const rangeMatch = href?.match(/compare\/([^.]+)\.\.\.(.+)/);
-    if (rangeMatch) {
-      return { baseRef: rangeMatch[1], headRef: rangeMatch[2] };
-    }
-  }
-
-  // Strategy 3: Look for specific data attributes
-  const baseElement = document.querySelector("[data-base-ref]");
-  const headElement = document.querySelector("[data-head-ref]");
-  if (baseElement && headElement) {
-    return {
-      baseRef: baseElement.getAttribute("data-base-ref") || undefined,
-      headRef: headElement.getAttribute("data-head-ref") || undefined,
-    };
-  }
-
-  // Strategy 4: Parse from the PR header text
-  // "user wants to merge X commits into base from head"
+  // Strategy 2: Look for commit-ref spans in PR header
   const prHeader = document.querySelector(".gh-header-meta");
   if (prHeader) {
     const spans = prHeader.querySelectorAll(".commit-ref");
     if (spans.length >= 2) {
-      const baseRef = spans[0].textContent?.trim();
-      const headRef = spans[1].textContent?.trim();
+      // Get the actual branch name from nested elements or direct text
+      const baseRef = spans[0].querySelector(".css-truncate-target")?.textContent?.trim()
+                   || spans[0].textContent?.trim();
+      const headRef = spans[1].querySelector(".css-truncate-target")?.textContent?.trim()
+                   || spans[1].textContent?.trim();
       if (baseRef && headRef) {
+        log(`Found refs via PR header: ${baseRef}...${headRef}`);
         return { baseRef, headRef };
       }
     }
   }
 
+  // Strategy 3: Generic commit-ref fallback
+  const commitRefs = document.querySelectorAll(".commit-ref");
+  if (commitRefs.length >= 2) {
+    const baseRef = commitRefs[0].querySelector(".css-truncate-target")?.textContent?.trim()
+                 || commitRefs[0].textContent?.trim();
+    const headRef = commitRefs[1].querySelector(".css-truncate-target")?.textContent?.trim()
+                 || commitRefs[1].textContent?.trim();
+    if (baseRef && headRef) {
+      log(`Found refs via generic commit-ref: ${baseRef}...${headRef}`);
+      return { baseRef, headRef };
+    }
+  }
+
+  // Strategy 4: Look for data attributes
+  const baseElement = document.querySelector("[data-base-ref]");
+  const headElement = document.querySelector("[data-head-ref]");
+  if (baseElement && headElement) {
+    const baseRef = baseElement.getAttribute("data-base-ref") || undefined;
+    const headRef = headElement.getAttribute("data-head-ref") || undefined;
+    if (baseRef && headRef) {
+      log(`Found refs via data attributes: ${baseRef}...${headRef}`);
+      return { baseRef, headRef };
+    }
+  }
+
+  log("Could not extract base/head refs from DOM");
   return {};
 }
 
