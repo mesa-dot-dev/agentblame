@@ -280,5 +280,11 @@ tokenInput.addEventListener("focus", () => {
 // Log popup opened
 logInfo("popup", "Popup opened");
 
+// Set version from manifest
+const versionEl = document.getElementById("version");
+if (versionEl) {
+  versionEl.textContent = `v${api.runtime.getManifest().version}`;
+}
+
 // Initialize on load
 init();
