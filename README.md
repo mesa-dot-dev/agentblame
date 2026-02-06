@@ -47,16 +47,18 @@ curl -fsSL https://bun.sh/install | bash
 
 ## Quick Start
 
-### 1. Install & Set Up
+### 1. One-Time Machine Setup
 
-Install the CLI globally
+Run this once on your machine to create the local database:
 ```bash
-npm install -g @mesadev/agentblame
+bunx @mesadev/agentblame@latest setup
 ```
 
-Then in a git repository run
+### 2. Repository Setup
+
+In each git repository you want to track:
 ```bash
-agentblame init
+bunx @mesadev/agentblame@latest init
 ```
 
 This sets up everything automatically for your repository:
@@ -64,7 +66,7 @@ This sets up everything automatically for your repository:
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-> **Important:** Restart your editor after installation.
+> **Important:** Restart your editor after running init.
 
 <br>
 
@@ -182,10 +184,13 @@ Full repository-wide analytics, accessible from the **Insights** sidebar on any 
 
 ## CLI Reference
 
+Run with `bunx @mesadev/agentblame@latest <command>` or install globally with `npm install -g @mesadev/agentblame`.
+
 | Command | Description |
 |---------|-------------|
-| `agentblame init` | Set up hooks and GitHub Actions workflow |
-| `agentblame clean` | Remove hooks and local database |
+| `agentblame setup` | One-time machine setup (creates ~/.agentblame database) |
+| `agentblame init` | Set up hooks and GitHub Actions workflow for a repo |
+| `agentblame clean` | Remove hooks from current repo |
 | `agentblame blame <file>` | Show AI attribution for a file |
 | `agentblame sync` | Transfer notes after squash/rebase |
 | `agentblame config` | Show/set configuration |
@@ -221,6 +226,7 @@ Full repository-wide analytics, accessible from the **Insights** sidebar on any 
 
 | Problem | Solution |
 |---------|----------|
+| Database not found | Run `bunx @mesadev/agentblame@latest setup` once on your machine |
 | Hooks not capturing | Restart your editor; run `agentblame debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
 | Squash merge lost attribution | Ensure workflow is committed; run `agentblame sync` locally |
