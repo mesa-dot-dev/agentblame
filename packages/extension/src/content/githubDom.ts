@@ -8,7 +8,7 @@ import { api } from "../lib/browser";
 // Debug logging - disabled in production
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function log(..._args: unknown[]): void {
-  // Logging disabled for production
+  // Uncomment for debugging: console.log("[AgentBlame DOM]", ...args);
 }
 
 /**
@@ -494,7 +494,8 @@ export function removeAllMarkers(): void {
     }
   });
 
-  const summaries = document.querySelectorAll(".ab-pr-summary");
+  // Remove PR summaries, but preserve status banners (no-attribution messages)
+  const summaries = document.querySelectorAll(".ab-pr-summary:not(.ab-pr-summary-status)");
   summaries.forEach((s) => {
     s.remove();
   });
@@ -779,7 +780,7 @@ export function showError(message: string): void {
 }
 
 /**
- * Show status when no notes are found (for debugging)
+ * Show status when no notes are found
  */
 export function showNoNotesStatus(diagnostics: {
   notesRefExists: boolean;
@@ -791,15 +792,15 @@ export function showNoNotesStatus(diagnostics: {
     ? api.runtime.getURL("icons/icon48.png")
     : "";
 
-  // Build status message based on diagnostics
+  // Build clear, debuggable status message
   let statusMessage: string;
 
   if (!diagnostics.notesRefExists) {
-    statusMessage = "No attribution data · notes ref not found";
+    statusMessage = "No git notes found · run 'agentblame init' and push notes";
   } else if (diagnostics.commitsWithNotes === 0) {
-    statusMessage = `No attribution for ${diagnostics.totalCommits} commit${diagnostics.totalCommits === 1 ? "" : "s"} · may be human-authored`;
+    statusMessage = `No notes for ${diagnostics.totalCommits} commit${diagnostics.totalCommits === 1 ? "" : "s"} · notes may not be pushed`;
   } else {
-    statusMessage = `${diagnostics.commitsWithNotes}/${diagnostics.totalCommits} commits with attribution`;
+    statusMessage = `Notes found for ${diagnostics.commitsWithNotes}/${diagnostics.totalCommits} commits`;
   }
 
   const statusHtml = `

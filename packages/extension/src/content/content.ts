@@ -37,12 +37,12 @@ let pendingProcess: ReturnType<typeof setTimeout> | null = null;
 // Debug logging - disabled in production
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function log(..._args: unknown[]): void {
-  // Logging disabled for production
+  // Uncomment for debugging: console.log("[AgentBlame]", ...args);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function logError(..._args: unknown[]): void {
-  // Logging disabled for production
+  // Uncomment for debugging: console.error("[AgentBlame]", ...args);
 }
 
 /**
@@ -108,6 +108,12 @@ async function init(): Promise<void> {
 async function processPage(): Promise<void> {
   if (isProcessing) {
     log("Already processing, skipping");
+    return;
+  }
+
+  // Don't reprocess if we've already shown results (success or no-data status)
+  if (hasProcessedSuccessfully) {
+    log("Already processed, skipping");
     return;
   }
 
@@ -185,12 +191,14 @@ async function processPage(): Promise<void> {
         `Unsupported attribution format (v${versions}). Agent Blame ${MIN_SUPPORTED_VERSION}.0+ required. Please update your CLI and re-process commits.`
       );
       log(`Unsupported versions found: ${versions}`);
+      hasProcessedSuccessfully = true; // Prevent observer from re-processing
       return;
     }
 
     if (notesResult.notes.size === 0) {
       log("No attribution notes found for any commits");
       showNoNotesStatus(notesResult.diagnostics);
+      hasProcessedSuccessfully = true; // Prevent observer from re-processing
       return;
     }
 
@@ -399,6 +407,14 @@ function setupObserver(): void {
 
     // Always check for tab changes - this handles returning to Files Changed
     if (hasTabChange) {
+      // Only reset if we actually left the files tab and came back
+      const stillOnFilesTab = isFilesChangedTab();
+      if (hasProcessedSuccessfully && stillOnFilesTab) {
+        // We're still on the same tab, ignore spurious aria-selected changes
+        log("Tab change detected but still on Files Changed, ignoring");
+        return;
+      }
+
       if (pendingProcess) {
         clearTimeout(pendingProcess);
       }

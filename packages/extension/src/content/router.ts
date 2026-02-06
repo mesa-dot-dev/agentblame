@@ -26,6 +26,7 @@ import {
   showLoading,
   hideLoading,
   showError,
+  showNoNotesStatus,
   isFilesChangedTab,
   initTooltip,
 } from "./githubDom";
@@ -89,6 +90,12 @@ async function initPRAttribution(): Promise<void> {
 async function processPRPage(): Promise<void> {
   if (isProcessing) return;
 
+  // Don't reprocess if already showing results
+  if (hasProcessedSuccessfully) {
+    logDebug("router", "Already processed, skipping");
+    return;
+  }
+
   const onFilesTab = isFilesChangedTab();
 
   if (!onFilesTab) {
@@ -144,7 +151,11 @@ async function processPRPage(): Promise<void> {
       return;
     }
 
-    if (notesResult.notes.size === 0) return;
+    if (notesResult.notes.size === 0) {
+      showNoNotesStatus(notesResult.diagnostics);
+      hasProcessedSuccessfully = true;
+      return;
+    }
 
     const { lineMap: attributionMap, prompts } = buildAttributionMap(notesResult.notes);
 
@@ -386,6 +397,13 @@ function setupPRObserver(): void {
     });
 
     if (hasTabChange) {
+      // Only reset if we actually left the files tab
+      const stillOnFilesTab = isFilesChangedTab();
+      if (hasProcessedSuccessfully && stillOnFilesTab) {
+        logDebug("router", "Tab change detected but still on Files Changed, ignoring");
+        return;
+      }
+
       if (pendingProcess) clearTimeout(pendingProcess);
       pendingProcess = setTimeout(() => {
         pendingProcess = null;
