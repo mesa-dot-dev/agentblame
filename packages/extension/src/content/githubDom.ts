@@ -779,6 +779,64 @@ export function showError(message: string): void {
 }
 
 /**
+ * Show status when no notes are found (for debugging)
+ */
+export function showNoNotesStatus(diagnostics: {
+  notesRefExists: boolean;
+  totalCommits: number;
+  commitsWithNotes: number;
+}): void {
+  // Get the extension icon URL
+  const iconUrl = api.runtime?.getURL
+    ? api.runtime.getURL("icons/icon48.png")
+    : "";
+
+  // Build status message based on diagnostics
+  let statusMessage: string;
+
+  if (!diagnostics.notesRefExists) {
+    statusMessage = "No attribution data · notes ref not found";
+  } else if (diagnostics.commitsWithNotes === 0) {
+    statusMessage = `No attribution for ${diagnostics.totalCommits} commit${diagnostics.totalCommits === 1 ? "" : "s"} · may be human-authored`;
+  } else {
+    statusMessage = `${diagnostics.commitsWithNotes}/${diagnostics.totalCommits} commits with attribution`;
+  }
+
+  const statusHtml = `
+    <div class="ab-pr-summary-container">
+      <div class="ab-pr-summary-header">
+        <div class="ab-header-left">
+          ${iconUrl ? `<img src="${iconUrl}" alt="Agent Blame" class="ab-pr-summary-logo" />` : ""}
+          <span class="ab-pr-summary-title">Agent Blame</span>
+        </div>
+        <div class="ab-header-right ab-status-info">
+          <span class="ab-status-text">${escapeHtml(statusMessage)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Check if loading header exists - update it instead of removing
+  const existingSummary = document.querySelector(".ab-pr-summary");
+  if (existingSummary) {
+    existingSummary.classList.remove("ab-pr-summary-loading");
+    existingSummary.classList.add("ab-pr-summary-status");
+    existingSummary.innerHTML = statusHtml;
+    return;
+  }
+
+  // Create new banner
+  const summary = document.createElement("div");
+  summary.className = "ab-pr-summary ab-pr-summary-status";
+  summary.innerHTML = statusHtml;
+
+  const injectionPoint = findBannerInjectionPoint();
+  if (injectionPoint) {
+    injectionPoint.parent.insertBefore(summary, injectionPoint.before);
+  }
+}
+
+/**
  * Find an injection point for summary/loading banners
  */
 function findBannerInjectionPoint(): { parent: Element; before: Element | null } | null {

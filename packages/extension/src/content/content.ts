@@ -21,6 +21,7 @@ import {
   showLoading,
   hideLoading,
   showError,
+  showNoNotesStatus,
   isFilesChangedTab,
   initTooltip,
 } from "./githubDom";
@@ -189,6 +190,7 @@ async function processPage(): Promise<void> {
 
     if (notesResult.notes.size === 0) {
       log("No attribution notes found for any commits");
+      showNoNotesStatus(notesResult.diagnostics);
       return;
     }
 
