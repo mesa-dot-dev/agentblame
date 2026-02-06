@@ -12,7 +12,7 @@ function log(..._args: unknown[]): void {
 }
 
 /**
- * Extract PR context from the current URL
+ * Extract PR context from the current URL and DOM
  */
 export function extractPRContext(): PRContext | null {
   const match = window.location.pathname.match(
@@ -23,12 +23,71 @@ export function extractPRContext(): PRContext | null {
     return null;
   }
 
+  // Extract base and head refs from DOM for compare API
+  const { baseRef, headRef } = extractBaseHeadRefs();
+
   return {
     owner: match[1],
     repo: match[2],
     prNumber: parseInt(match[3], 10),
     commits: [], // Will be populated later
+    baseRef,
+    headRef,
   };
+}
+
+/**
+ * Extract base and head refs from GitHub PR page DOM
+ * Used for compare API to avoid needing Pull Requests permission
+ */
+function extractBaseHeadRefs(): { baseRef?: string; headRef?: string } {
+  // Strategy 1: Look for commit-ref spans (common GitHub UI pattern)
+  // Format: "base-repo:base-branch ... head-repo:head-branch" or just "branch"
+  const commitRefs = document.querySelectorAll(".commit-ref");
+  if (commitRefs.length >= 2) {
+    const baseRef = commitRefs[0].textContent?.trim();
+    const headRef = commitRefs[1].textContent?.trim();
+    if (baseRef && headRef) {
+      return { baseRef, headRef };
+    }
+  }
+
+  // Strategy 2: Look for the compare range in the page
+  // GitHub shows "base...head" in various places
+  const compareRange = document.querySelector("[data-pjax='#repo-content-pjax-container']");
+  if (compareRange) {
+    const href = compareRange.getAttribute("href");
+    const rangeMatch = href?.match(/compare\/([^.]+)\.\.\.(.+)/);
+    if (rangeMatch) {
+      return { baseRef: rangeMatch[1], headRef: rangeMatch[2] };
+    }
+  }
+
+  // Strategy 3: Look for specific data attributes
+  const baseElement = document.querySelector("[data-base-ref]");
+  const headElement = document.querySelector("[data-head-ref]");
+  if (baseElement && headElement) {
+    return {
+      baseRef: baseElement.getAttribute("data-base-ref") || undefined,
+      headRef: headElement.getAttribute("data-head-ref") || undefined,
+    };
+  }
+
+  // Strategy 4: Parse from the PR header text
+  // "user wants to merge X commits into base from head"
+  const prHeader = document.querySelector(".gh-header-meta");
+  if (prHeader) {
+    const spans = prHeader.querySelectorAll(".commit-ref");
+    if (spans.length >= 2) {
+      const baseRef = spans[0].textContent?.trim();
+      const headRef = spans[1].textContent?.trim();
+      if (baseRef && headRef) {
+        return { baseRef, headRef };
+      }
+    }
+  }
+
+  return {};
 }
 
 /**

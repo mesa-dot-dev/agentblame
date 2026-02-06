@@ -587,7 +587,9 @@ export class GitHubAPI {
   }
 
   /**
-   * Get commits for a PR
+   * Get commits for a PR using the Pull Requests API
+   * Note: Requires Pull Requests (read) permission for private repos
+   * @deprecated Use getCompareCommits() instead for fewer permission requirements
    */
   async getPRCommits(
     owner: string,
@@ -607,6 +609,42 @@ export class GitHubAPI {
 
     log(`PR has ${commits.length} commit(s)`);
     return commits.map((c) => c.sha);
+  }
+
+  /**
+   * Get commits between base and head using Compare API
+   * Only requires Contents (read) permission - no Pull Requests permission needed
+   * Handles forked PRs where head is in format "username:branch"
+   */
+  async getCompareCommits(
+    owner: string,
+    repo: string,
+    baseRef: string,
+    headRef: string,
+  ): Promise<string[]> {
+    log(`Comparing ${baseRef}...${headRef} in ${owner}/${repo}`);
+
+    // Handle forked repos - headRef might be "username:branch"
+    // The compare API accepts this format directly
+    const response = await this.fetch<{
+      commits: Array<{ sha: string }>;
+      status: string;
+      ahead_by: number;
+      behind_by: number;
+    }>(`/repos/${owner}/${repo}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`);
+
+    if (!response) {
+      log("No compare response from API");
+      return [];
+    }
+
+    if (!response.commits || response.commits.length === 0) {
+      log("No commits in compare response");
+      return [];
+    }
+
+    log(`Compare found ${response.commits.length} commit(s)`);
+    return response.commits.map((c) => c.sha);
   }
 
   /**

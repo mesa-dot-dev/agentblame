@@ -75,6 +75,9 @@ export interface PRContext {
   repo: string;
   prNumber: number;
   commits: string[];
+  // Base and head refs for compare API (avoids needing Pull Requests permission)
+  baseRef?: string;  // e.g., "main"
+  headRef?: string;  // e.g., "feature-branch" or "username:feature-branch" for forks
 }
 
 // Parsed diff line info

@@ -163,11 +163,25 @@ async function processPage(): Promise<void> {
       return;
     }
 
-    const commits = await githubApi.getPRCommits(
-      context.owner,
-      context.repo,
-      context.prNumber,
-    );
+    // Get commits using compare API (only needs Contents permission)
+    // Falls back to PR API if base/head refs not available
+    let commits: string[];
+    if (context.baseRef && context.headRef) {
+      commits = await githubApi.getCompareCommits(
+        context.owner,
+        context.repo,
+        context.baseRef,
+        context.headRef,
+      );
+    } else {
+      // Fallback to PR commits API (needs Pull Requests permission for private repos)
+      commits = await githubApi.getPRCommits(
+        context.owner,
+        context.repo,
+        context.prNumber,
+      );
+    }
+
     if (commits.length === 0) {
       log("No commits found for PR");
       showError("No commits found for this PR");
