@@ -1,6 +1,6 @@
 {
   "name": "@agentblame/firefox",
-  "version": "3.1.0",
+  "version": "3.1.2",
   "description": "Agent Blame Firefox Extension - See AI attribution on GitHub PRs",
   "private": true,
   "scripts": {

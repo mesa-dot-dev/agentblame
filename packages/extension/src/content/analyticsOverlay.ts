@@ -345,6 +345,7 @@ function filterAnalyticsByPeriod(
   // Fallback: aggregate from filtered history
   let totalLines = 0;
   let aiLines = 0;
+  let humanLines = 0;
   let unknownLines = 0;
   let commits = 0;
   let prompts = 0;
@@ -352,6 +353,7 @@ function filterAnalyticsByPeriod(
   for (const entry of filteredHistory) {
     totalLines += entry.added;
     aiLines += entry.aiLines;
+    humanLines += entry.humanLines;
     unknownLines += entry.unknownLines;
     commits += entry.commits;
     prompts += entry.prompts;
@@ -363,7 +365,7 @@ function filterAnalyticsByPeriod(
     summary: {
       totalLines,
       aiLines,
-      humanLines: totalLines - aiLines - unknownLines,
+      humanLines,
       unknownLines,
       commits,
       prompts,

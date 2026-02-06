@@ -551,76 +551,64 @@ function writeAnalyticsNote(analytics: AnalyticsNote): boolean {
 }
 
 /**
- * Get PR diff stats
- * Uses MERGE_SHA^1..MERGE_SHA to isolate only the changes this PR introduced,
- * excluding changes from other PRs merged into the base branch in the meantime.
+ * Parsed added line with file path and line number
  */
-function getPRDiffStats(): { additions: number; deletions: number } {
-  const target = MERGE_SHA || "HEAD";
-  const diff = run(`git diff ${target}^1..${target}`);
-  if (!diff) return { additions: 0, deletions: 0 };
-
-  let additions = 0;
-  let deletions = 0;
-
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      const content = line.slice(1).trim();
-      if (content !== "") additions++;
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      const content = line.slice(1).trim();
-      if (content !== "") deletions++;
-    }
-  }
-
-  return { additions, deletions };
+interface AddedLine {
+  file: string;
+  lineNumber: number;
 }
 
 /**
- * Compute stats from collected attributions
+ * Get PR diff stats with detailed line information
+ * Uses MERGE_SHA^1..MERGE_SHA to isolate only the changes this PR introduced,
+ * excluding changes from other PRs merged into the base branch in the meantime.
  */
-function computePRStats(prData: PRAttributionData): {
-  aiLines: number;
-  prompts: number;
-  byAgent: AgentBreakdown;
-  byModel: ModelBreakdown;
-} {
-  let aiLines = 0;
-  let prompts = 0;
-  const byAgent: AgentBreakdown = {};
-  const byModel: ModelBreakdown = {};
-  const countedSessions = new Set<string>();
+function getPRDiffStats(): { additions: number; deletions: number; addedLines: AddedLine[] } {
+  const target = MERGE_SHA || "HEAD";
+  const diff = run(`git diff ${target}^1..${target}`);
+  if (!diff) return { additions: 0, deletions: 0, addedLines: [] };
 
-  for (const [_, sessionRanges] of prData.fileRanges) {
-    for (const [sessionId, ranges] of sessionRanges) {
-      const session = prData.sessions[sessionId];
-      if (!session) continue;
+  let additions = 0;
+  let deletions = 0;
+  const addedLines: AddedLine[] = [];
 
-      for (const range of ranges) {
-        const lineCount = range.endLine - range.startLine + 1;
-        aiLines += lineCount;
+  let currentFile = "";
+  let newLineNumber = 0;
 
-        // Agent breakdown
-        const agent = session.agent;
-        if (agent === "cursor" || agent === "claude" || agent === "opencode") {
-          byAgent[agent] = (byAgent[agent] || 0) + lineCount;
-        }
+  for (const line of diff.split("\n")) {
+    // Track current file from diff header
+    if (line.startsWith("+++ b/")) {
+      currentFile = line.slice(6);
+      continue;
+    }
 
-        // Model breakdown
-        if (session.model) {
-          byModel[session.model] = (byModel[session.model] || 0) + lineCount;
-        }
+    // Track line numbers from hunk header: @@ -old,count +new,count @@
+    if (line.startsWith("@@")) {
+      const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        newLineNumber = parseInt(match[1], 10);
       }
+      continue;
+    }
 
-      // Count prompts from session metadata (only once per session)
-      if (!countedSessions.has(sessionId) && session.prompts) {
-        prompts += session.prompts.length;
-        countedSessions.add(sessionId);
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      const content = line.slice(1).trim();
+      if (content !== "") {
+        additions++;
+        addedLines.push({ file: currentFile, lineNumber: newLineNumber });
       }
+      newLineNumber++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      const content = line.slice(1).trim();
+      if (content !== "") deletions++;
+      // Don't increment newLineNumber for deleted lines
+    } else if (!line.startsWith("\\")) {
+      // Context line (not "\ No newline at end of file")
+      newLineNumber++;
     }
   }
 
-  return { aiLines, prompts, byAgent, byModel };
+  return { additions, deletions, addedLines };
 }
 
 /**
@@ -647,6 +635,27 @@ function mergeModels(a: ModelBreakdown, b: ModelBreakdown): ModelBreakdown {
 }
 
 /**
+ * Check if a line number falls within any AI range for a file
+ */
+function isLineInAIRange(
+  file: string,
+  lineNumber: number,
+  fileRanges: PRAttributionData["fileRanges"]
+): { isAI: boolean; sessionId?: string } {
+  const sessionRanges = fileRanges.get(file);
+  if (!sessionRanges) return { isAI: false };
+
+  for (const [sessionId, ranges] of sessionRanges) {
+    for (const range of ranges) {
+      if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
+        return { isAI: true, sessionId };
+      }
+    }
+  }
+  return { isAI: false };
+}
+
+/**
  * Update analytics with PR data
  */
 function updateAnalytics(
@@ -654,18 +663,52 @@ function updateAnalytics(
   prData: PRAttributionData,
   commitCount: number
 ): AnalyticsNote {
-  const prStats = computePRStats(prData);
   const diffStats = getPRDiffStats();
   const now = MERGED_AT || new Date().toISOString();
 
   // Determine if this PR was tracked (has session data)
   const isTracked = Object.keys(prData.sessions).length > 0;
 
-  // If tracked: we know AI vs Human
-  // If untracked: all lines are unknown
-  const aiLines = prStats.aiLines;
-  const humanLines = isTracked ? diffStats.additions - prStats.aiLines : 0;
+  // Compute AI vs Human by checking each added line against AI ranges
+  // This ensures aiLines + humanLines = additions (no negatives possible)
+  let aiLines = 0;
+  let humanLines = 0;
+  const byAgent: AgentBreakdown = {};
+  const byModel: ModelBreakdown = {};
+
+  if (isTracked) {
+    for (const addedLine of diffStats.addedLines) {
+      const result = isLineInAIRange(addedLine.file, addedLine.lineNumber, prData.fileRanges);
+      if (result.isAI && result.sessionId) {
+        aiLines++;
+        // Update agent/model breakdowns
+        const session = prData.sessions[result.sessionId];
+        if (session) {
+          const agent = session.agent;
+          if (agent === "cursor" || agent === "claude" || agent === "opencode") {
+            byAgent[agent] = (byAgent[agent] || 0) + 1;
+          }
+          if (session.model) {
+            byModel[session.model] = (byModel[session.model] || 0) + 1;
+          }
+        }
+      } else {
+        humanLines++;
+      }
+    }
+  }
+
   const unknownLines = isTracked ? 0 : diffStats.additions;
+
+  // Count prompts from sessions
+  let prompts = 0;
+  const countedSessions = new Set<string>();
+  for (const [sessionId, session] of Object.entries(prData.sessions)) {
+    if (!countedSessions.has(sessionId) && session.prompts) {
+      prompts += session.prompts.length;
+      countedSessions.add(sessionId);
+    }
+  }
 
   // Create PR entry
   const prEntry = {
@@ -675,7 +718,7 @@ function updateAnalytics(
     aiLines,
     humanLines,
     unknownLines,
-    prompts: prStats.prompts,
+    prompts,
     commits: commitCount,
     mergedAt: now,
   };
@@ -686,9 +729,9 @@ function updateAnalytics(
     existing.summary.humanLines += humanLines;
     existing.summary.unknownLines = (existing.summary.unknownLines || 0) + unknownLines;
     existing.summary.totalLines = existing.summary.aiLines + existing.summary.humanLines + existing.summary.unknownLines;
-    existing.summary.prompts = (existing.summary.prompts || 0) + prStats.prompts;
-    existing.summary.byAgent = mergeAgents(existing.summary.byAgent, prStats.byAgent);
-    existing.summary.byModel = mergeModels(existing.summary.byModel, prStats.byModel);
+    existing.summary.prompts = (existing.summary.prompts || 0) + prompts;
+    existing.summary.byAgent = mergeAgents(existing.summary.byAgent, byAgent);
+    existing.summary.byModel = mergeModels(existing.summary.byModel, byModel);
 
     // Update contributor
     if (!existing.contributors[PR_AUTHOR]) {
@@ -705,7 +748,7 @@ function updateAnalytics(
     const contributor = existing.contributors[PR_AUTHOR];
     contributor.commits += 1;
     contributor.prs = (contributor.prs || 0) + 1;
-    contributor.prompts = (contributor.prompts || 0) + prStats.prompts;
+    contributor.prompts = (contributor.prompts || 0) + prompts;
     contributor.aiLines += aiLines;
     contributor.humanLines += humanLines;
     contributor.unknownLines = (contributor.unknownLines || 0) + unknownLines;
@@ -715,7 +758,7 @@ function updateAnalytics(
     for (const model of contributor.topModels) {
       modelCounts.set(model, (modelCounts.get(model) || 0) + 1);
     }
-    for (const [model, count] of Object.entries(prStats.byModel)) {
+    for (const [model, count] of Object.entries(byModel)) {
       modelCounts.set(model, (modelCounts.get(model) || 0) + count);
     }
     contributor.topModels = Array.from(modelCounts.entries())
@@ -746,14 +789,14 @@ function updateAnalytics(
       existingHourly.aiLines += aiLines;
       existingHourly.humanLines += humanLines;
       existingHourly.unknownLines = (existingHourly.unknownLines || 0) + unknownLines;
-      existingHourly.prompts = (existingHourly.prompts || 0) + prStats.prompts;
+      existingHourly.prompts = (existingHourly.prompts || 0) + prompts;
       existingHourly.commits += 1;
-      for (const [agent, count] of Object.entries(prStats.byAgent)) {
+      for (const [agent, count] of Object.entries(byAgent)) {
         if (count !== undefined) {
           existingHourly.byAgent[agent] = (existingHourly.byAgent[agent] || 0) + count;
         }
       }
-      for (const [model, count] of Object.entries(prStats.byModel)) {
+      for (const [model, count] of Object.entries(byModel)) {
         if (count !== undefined) {
           existingHourly.byModel[model] = (existingHourly.byModel[model] || 0) + count;
         }
@@ -764,9 +807,9 @@ function updateAnalytics(
         aiLines,
         humanLines,
         unknownLines,
-        prompts: prStats.prompts,
-        byAgent: { ...prStats.byAgent },
-        byModel: { ...prStats.byModel },
+        prompts,
+        byAgent: { ...byAgent },
+        byModel: { ...byModel },
         commits: 1,
       });
       // Keep only last 72 hours
@@ -781,14 +824,14 @@ function updateAnalytics(
       existingDaily.aiLines += aiLines;
       existingDaily.humanLines += humanLines;
       existingDaily.unknownLines = (existingDaily.unknownLines || 0) + unknownLines;
-      existingDaily.prompts = (existingDaily.prompts || 0) + prStats.prompts;
+      existingDaily.prompts = (existingDaily.prompts || 0) + prompts;
       existingDaily.commits += 1;
-      for (const [agent, count] of Object.entries(prStats.byAgent)) {
+      for (const [agent, count] of Object.entries(byAgent)) {
         if (count !== undefined) {
           existingDaily.byAgent[agent] = (existingDaily.byAgent[agent] || 0) + count;
         }
       }
-      for (const [model, count] of Object.entries(prStats.byModel)) {
+      for (const [model, count] of Object.entries(byModel)) {
         if (count !== undefined) {
           existingDaily.byModel[model] = (existingDaily.byModel[model] || 0) + count;
         }
@@ -799,9 +842,9 @@ function updateAnalytics(
         aiLines,
         humanLines,
         unknownLines,
-        prompts: prStats.prompts,
-        byAgent: { ...prStats.byAgent },
-        byModel: { ...prStats.byModel },
+        prompts,
+        byAgent: { ...byAgent },
+        byModel: { ...byModel },
         commits: 1,
       });
       // Keep only last 30 days
@@ -823,9 +866,9 @@ function updateAnalytics(
     aiLines,
     humanLines,
     unknownLines,
-    prompts: prStats.prompts,
-    byAgent: prStats.byAgent,
-    byModel: prStats.byModel,
+    prompts,
+    byAgent,
+    byModel,
     commits: 1,
   };
 
@@ -834,9 +877,9 @@ function updateAnalytics(
     aiLines,
     humanLines,
     unknownLines,
-    prompts: prStats.prompts,
-    byAgent: prStats.byAgent,
-    byModel: prStats.byModel,
+    prompts,
+    byAgent,
+    byModel,
     commits: 1,
   };
 
@@ -849,19 +892,19 @@ function updateAnalytics(
       aiLines,
       humanLines,
       unknownLines,
-      prompts: prStats.prompts,
-      byAgent: prStats.byAgent,
-      byModel: prStats.byModel,
+      prompts,
+      byAgent,
+      byModel,
     },
     contributors: {
       [PR_AUTHOR]: {
         commits: 1,
         prs: 1,
-        prompts: prStats.prompts,
+        prompts,
         aiLines,
         humanLines,
         unknownLines,
-        topModels: Object.keys(prStats.byModel).slice(0, 3),
+        topModels: Object.keys(byModel).slice(0, 3),
       },
     },
     recentPRs: [prEntry],
