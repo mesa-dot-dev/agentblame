@@ -4,42 +4,43 @@
  * Agent Blame CLI v3
  *
  * Commands:
- *   agentblame init              - Set up hooks and configuration
+ *   agentblame init              - Set up repo for AI tracking (first developer, commits to git)
+ *   agentblame setup             - Set up local machine (DB + git hook)
  *   agentblame blame <file>      - Show attribution for a file
- *   agentblame status            - Show current attribution status
+ *
+ * Flow:
+ *   First developer: init → commit → push
+ *   Other developers: clone → setup
  */
 
 import * as path from "node:path";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import { execSync } from "node:child_process";
 import { blame } from "./blame";
 import { sync } from "./sync";
 import { runProcess } from "./process";
 import { runCapture } from "./capture";
+import { runPostMerge } from "./post-merge";
 import {
   installCursorHooks,
   installClaudeHooks,
   installOpenCodeHooks,
-  installGitHook,
   installGitHubAction,
-  uninstallCursorHooks,
-  uninstallClaudeHooks,
-  uninstallOpenCodeHooks,
-  uninstallGitHook,
-  uninstallGitHubAction,
+  installGitHookSmart,
+  detectHooksSetup,
+  isGitHookInstalled,
 } from "./lib/hooks";
 import { getRepoRoot, runGit } from "./lib/git/gitCli";
-import { configureNotesSync, removeNotesSync } from "./lib/git/gitConfig";
+import { configureNotesSync } from "./lib/git/gitConfig";
 import {
-  initDatabase,
-  setDatabasePath,
+  initGlobalDatabase,
   getStats,
   getRecentSessions,
   getToolCallsForSession,
+  getRepoIdentifier,
+  wipeAndRecreateDatabase,
+  getGlobalAgentBlameDir,
 } from "./lib/database";
 import {
-  getDatabasePath,
   ensureAgentBlameDirs,
   getAgentBlameGitDir,
   getActiveBaseShas,
@@ -55,20 +56,14 @@ import {
   parseConfigValue,
   type AgentBlameConfig,
 } from "./lib/config";
+import {
+  logCommandStart,
+  logCommandSuccess,
+  logCommandError,
+  getRecentLogs,
+} from "./lib/logger";
 
 const ANALYTICS_TAG = "agentblame-analytics-anchor";
-
-/**
- * Check if Bun is installed and available in PATH.
- */
-function isBunInstalled(): boolean {
-  try {
-    execSync("bun --version", { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -78,8 +73,8 @@ async function main(): Promise<void> {
     case "init":
       await runInit(args.slice(1));
       break;
-    case "clean":
-      await runClean(args.slice(1));
+    case "setup":
+      await runSetup();
       break;
     case "capture":
       await runCapture();
@@ -90,6 +85,9 @@ async function main(): Promise<void> {
     case "process":
       await runProcess(args[1]);
       break;
+    case "post-merge":
+      await runPostMerge();
+      break;
     case "sync":
       await runSync(args.slice(1));
       break;
@@ -98,6 +96,9 @@ async function main(): Promise<void> {
       break;
     case "config":
       await runConfig(args.slice(1));
+      break;
+    case "status":
+      await runStatus();
       break;
     case "--version":
     case "-v":
@@ -120,17 +121,27 @@ function printHelp(): void {
 Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
-  agentblame init              Set up hooks for current repo
-  agentblame clean             Remove hooks from current repo
+  agentblame setup             Set up local machine (run once, wipes and recreates DB)
+  agentblame init              Set up repo for AI tracking (first developer only)
+  agentblame status            Show tracking stats
   agentblame blame <file>      Show AI attribution
   agentblame sync              Transfer notes after squash/rebase
   agentblame config            Show/set configuration
   agentblame debug             Show detailed debug info
 
+Setup:
+  First developer (once per repo):
+    bunx @mesadev/agentblame@latest init
+    git add .cursor/ .claude/ .github/
+    git commit && git push
+
+  All developers (once per machine):
+    bunx @mesadev/agentblame@latest setup
+
 Examples:
-  agentblame init
-  agentblame blame src/index.ts
-  agentblame config set storePromptContent true
+  bunx @mesadev/agentblame@latest setup
+  bunx @mesadev/agentblame@latest init
+  bunx @mesadev/agentblame blame src/index.ts
 `);
 }
 
@@ -176,103 +187,8 @@ async function createAnalyticsTag(repoRoot: string): Promise<boolean> {
   }
 }
 
-/**
- * Clean up global hooks and database from previous versions.
- */
-async function cleanupGlobalInstall(): Promise<{
-  cursor: boolean;
-  claude: boolean;
-  db: boolean;
-}> {
-  const results = { cursor: false, claude: false, db: false };
-  const home = os.homedir();
-
-  // Clean up global Cursor hooks
-  const globalCursorHooks = path.join(home, ".cursor", "hooks.json");
-  try {
-    if (fs.existsSync(globalCursorHooks)) {
-      const config = JSON.parse(await fs.promises.readFile(globalCursorHooks, "utf8"));
-      if (config.hooks?.afterFileEdit) {
-        config.hooks.afterFileEdit = config.hooks.afterFileEdit.filter(
-          (h: any) =>
-            !h?.command?.includes("agentblame") && !h?.command?.includes("capture")
-        );
-      }
-      await fs.promises.writeFile(
-        globalCursorHooks,
-        JSON.stringify(config, null, 2),
-        "utf8"
-      );
-      results.cursor = true;
-    }
-  } catch {
-    // Ignore errors
-  }
-
-  // Clean up global Claude hooks
-  const globalClaudeSettings = path.join(home, ".claude", "settings.json");
-  try {
-    if (fs.existsSync(globalClaudeSettings)) {
-      const config = JSON.parse(
-        await fs.promises.readFile(globalClaudeSettings, "utf8")
-      );
-      if (config.hooks?.PostToolUse) {
-        config.hooks.PostToolUse = config.hooks.PostToolUse.filter(
-          (h: any) =>
-            !h?.hooks?.some(
-              (hh: any) =>
-                hh?.command?.includes("agentblame") ||
-                hh?.command?.includes("capture")
-            )
-        );
-      }
-      await fs.promises.writeFile(
-        globalClaudeSettings,
-        JSON.stringify(config, null, 2),
-        "utf8"
-      );
-      results.claude = true;
-    }
-  } catch {
-    // Ignore errors
-  }
-
-  // Clean up global database (old location)
-  const globalDb = path.join(home, ".agentblame");
-  try {
-    if (fs.existsSync(globalDb)) {
-      await fs.promises.rm(globalDb, { recursive: true });
-      results.db = true;
-    }
-  } catch {
-    // Ignore errors
-  }
-
-  return results;
-}
-
 async function runInit(initArgs: string[] = []): Promise<void> {
-  const forceCleanup = initArgs.includes("--force") || initArgs.includes("-f");
-
-  // Check if Bun is installed (required for hooks)
-  if (!isBunInstalled()) {
-    const installCmd =
-      process.platform === "win32"
-        ? 'powershell -c "irm bun.sh/install.ps1 | iex"'
-        : "curl -fsSL https://bun.sh/install | bash";
-
-    console.log("");
-    console.log("  \x1b[31m✗\x1b[0m Bun is required but not installed");
-    console.log("");
-    console.log("  Agent Blame uses Bun to run hooks. Install it first:");
-    console.log("");
-    console.log(`    \x1b[36m${installCmd}\x1b[0m`);
-    console.log("");
-    console.log("  Then restart your terminal and run this command again.");
-    console.log("  Learn more: \x1b[36mhttps://bun.sh\x1b[0m");
-    console.log("");
-    process.exit(1);
-  }
+  logCommandStart("init");
 
   // Validate we're in a git repo
   const repoRoot = await getRepoRoot(process.cwd());
@@ -287,55 +203,16 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame v3\x1b[0m");
-  console.log("  \x1b[2mTrack AI-generated code in your commits\x1b[0m");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame - Repository Setup\x1b[0m");
+  console.log("  \x1b[2mOne user runs this, commits to git, everyone benefits\x1b[0m");
   console.log("");
 
   const repoName = path.basename(repoRoot);
   console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
   console.log("");
 
-  // Clean up global install if --force flag is passed
-  if (forceCleanup) {
-    console.log("  \x1b[2mCleaning up global install...\x1b[0m");
-    const cleanup = await cleanupGlobalInstall();
-    if (cleanup.cursor) console.log("  \x1b[32m✓\x1b[0m Removed global Cursor hooks");
-    if (cleanup.claude) console.log("  \x1b[32m✓\x1b[0m Removed global Claude hooks");
-    if (cleanup.db) console.log("  \x1b[32m✓\x1b[0m Removed global database");
-    if (!cleanup.cursor && !cleanup.claude && !cleanup.db) {
-      console.log("  \x1b[2m  No global install found\x1b[0m");
-    }
-    console.log("");
-  }
-
   // Track results
   const results: { name: string; success: boolean }[] = [];
-
-  // Clean existing data (init always starts fresh)
-  const agentBlameGitDir = getAgentBlameGitDir(repoRoot);
-  try {
-    if (fs.existsSync(agentBlameGitDir)) {
-      await fs.promises.rm(agentBlameGitDir, { recursive: true });
-    }
-    // Also remove legacy .agentblame directory
-    const legacyDir = path.join(repoRoot, ".agentblame");
-    if (fs.existsSync(legacyDir)) {
-      await fs.promises.rm(legacyDir, { recursive: true });
-    }
-  } catch {
-    // Continue even if cleanup fails
-  }
-
-  // Create .git/agentblame directory and initialize SQLite database
-  try {
-    ensureAgentBlameDirs(repoRoot);
-    const dbPath = getDatabasePath(repoRoot);
-    setDatabasePath(dbPath);
-    initDatabase();
-    results.push({ name: "Database (.git/agentblame/)", success: true });
-  } catch (err) {
-    results.push({ name: "Database", success: false });
-  }
 
   // Initialize analytics
   try {
@@ -345,48 +222,58 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     results.push({ name: "Analytics", success: false });
   }
 
-  // Add old .agentblame/ to .gitignore (for backwards compatibility)
+  // Update .gitignore only if editor hooks are being ignored (add negation patterns)
   try {
     const gitignorePath = path.join(repoRoot, ".gitignore");
-    let gitignoreContent = "";
     if (fs.existsSync(gitignorePath)) {
-      gitignoreContent = await fs.promises.readFile(gitignorePath, "utf8");
+      const gitignoreContent = await fs.promises.readFile(gitignorePath, "utf8");
+      let entriesToAdd = "";
+
+      // Ensure .cursor/ is NOT ignored (add negation if it's ignored)
+      if (gitignoreContent.match(/^\.cursor\/?$/m) && !gitignoreContent.includes("!.cursor")) {
+        entriesToAdd += "\n# Agent Blame: ensure editor hooks are committed\n!.cursor/\n";
+      }
+
+      // Ensure .claude/ is NOT ignored (add negation if it's ignored)
+      if (gitignoreContent.match(/^\.claude\/?$/m) && !gitignoreContent.includes("!.claude")) {
+        entriesToAdd += "!.claude/\n";
+      }
+
+      // Ensure .opencode/ is NOT ignored (add negation if it's ignored)
+      if (gitignoreContent.match(/^\.opencode\/?$/m) && !gitignoreContent.includes("!.opencode")) {
+        entriesToAdd += "!.opencode/\n";
+      }
+
+      if (entriesToAdd) {
+        await fs.promises.appendFile(gitignorePath, entriesToAdd);
+        results.push({ name: "Updated .gitignore (added negations)", success: true });
+      }
     }
-    let entriesToAdd = "";
-    if (!gitignoreContent.includes(".agentblame")) {
-      entriesToAdd += "\n# Agent Blame local database (legacy)\n.agentblame/\n";
-    }
-    if (!gitignoreContent.includes(".opencode")) {
-      entriesToAdd +=
-        "\n# OpenCode local plugin (installed by agentblame init)\n.opencode/\n";
-    }
-    if (entriesToAdd) {
-      await fs.promises.appendFile(gitignorePath, entriesToAdd);
-    }
-    results.push({ name: "Updated .gitignore", success: true });
   } catch {
     results.push({ name: "Updated .gitignore", success: false });
   }
 
-  // Install editor hooks (repo-level)
+  // Install editor hooks (repo-level, to be committed)
   const cursorSuccess = await installCursorHooks(repoRoot);
-  results.push({ name: "Cursor hooks", success: cursorSuccess });
+  results.push({ name: "Cursor hooks (.cursor/)", success: cursorSuccess });
 
   const claudeSuccess = await installClaudeHooks(repoRoot);
-  results.push({ name: "Claude Code hooks", success: claudeSuccess });
+  results.push({ name: "Claude Code hooks (.claude/)", success: claudeSuccess });
 
   const opencodeSuccess = await installOpenCodeHooks(repoRoot);
-  results.push({ name: "OpenCode hooks", success: opencodeSuccess });
+  results.push({ name: "OpenCode hooks (.opencode/)", success: opencodeSuccess });
 
-  // Install repo hooks and workflow
-  const gitHookSuccess = await installGitHook(repoRoot);
-  results.push({ name: "Git post-commit hook", success: gitHookSuccess });
-
+  // Configure notes sync
   const notesPushSuccess = await configureNotesSync(repoRoot);
-  results.push({ name: "Notes auto-push", success: notesPushSuccess });
+  results.push({ name: "Notes auto-push config", success: notesPushSuccess });
 
+  // Install GitHub Actions workflow
   const githubActionSuccess = await installGitHubAction(repoRoot);
   results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
+
+  // Install git post-commit hook (detects custom hooks path like .husky/)
+  const gitHookResult = await installGitHookSmart(repoRoot);
+  results.push({ name: `Git post-commit hook (${gitHookResult.method})`, success: gitHookResult.success });
 
   // Create analytics anchor tag
   const analyticsTagSuccess = await createAnalyticsTag(repoRoot);
@@ -409,7 +296,7 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   console.log("");
 
   if (allSuccess) {
-    console.log("  \x1b[32m✓\x1b[0m \x1b[1mSetup complete\x1b[0m");
+    console.log("  \x1b[32m✓\x1b[0m \x1b[1mRepository setup complete\x1b[0m");
   } else if (anySuccess) {
     console.log("  \x1b[33m!\x1b[0m \x1b[1mSetup completed with warnings\x1b[0m");
   } else {
@@ -419,98 +306,120 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   console.log("");
   console.log("  \x1b[1mNext steps:\x1b[0m");
   console.log(
-    "  \x1b[33m1.\x1b[0m Commit \x1b[36m.github/workflows/agentblame.yml\x1b[0m to enable PR analytics"
+    "  \x1b[33m1.\x1b[0m Commit: \x1b[36m.cursor/\x1b[0m, \x1b[36m.claude/\x1b[0m, \x1b[36m.opencode/\x1b[0m, \x1b[36m.github/workflows/\x1b[0m"
   );
-  console.log("  \x1b[33m2.\x1b[0m Restart Cursor or Claude Code to pick up hooks");
-  console.log("  \x1b[33m3.\x1b[0m Make AI edits and commit your changes");
-  console.log(
-    "  \x1b[33m4.\x1b[0m Run \x1b[36magentblame blame <file>\x1b[0m to see attribution"
-  );
+  console.log("  \x1b[33m2.\x1b[0m Push to share with your team");
   console.log("");
+  console.log("  \x1b[2mTeammates run:\x1b[0m \x1b[36mbunx @mesadev/agentblame@latest setup\x1b[0m");
+  console.log("");
+
+  logCommandSuccess("init", { repo: repoName });
 }
 
-async function runClean(uninstallArgs: string[] = []): Promise<void> {
-  const forceCleanup =
-    uninstallArgs.includes("--force") || uninstallArgs.includes("-f");
-
-  // Validate we're in a git repo
-  const repoRoot = await getRepoRoot(process.cwd());
-  if (!repoRoot) {
-    console.log("");
-    console.log("  \x1b[31m✗\x1b[0m Not in a git repository");
-    console.log("");
-    console.log("  Run this command from inside a git repository.");
-    console.log("");
-    process.exit(1);
-  }
+/**
+ * Show status of agentblame - stats and info.
+ */
+async function runStatus(): Promise<void> {
+  logCommandStart("status");
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame\x1b[0m");
-  console.log("  \x1b[2mRemoving hooks and configuration\x1b[0m");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame Status\x1b[0m");
   console.log("");
 
-  const repoName = path.basename(repoRoot);
-  console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
+  // Initialize global database
+  initGlobalDatabase();
+
+  // Show global database location
+  console.log(`  \x1b[2mDatabase:\x1b[0m ${getGlobalAgentBlameDir()}/agentblame.db`);
   console.log("");
 
-  // Clean up global install if --force flag is passed
-  if (forceCleanup) {
-    console.log("  \x1b[2mCleaning up global install...\x1b[0m");
-    const cleanup = await cleanupGlobalInstall();
-    if (cleanup.cursor) console.log("  \x1b[32m✓\x1b[0m Removed global Cursor hooks");
-    if (cleanup.claude) console.log("  \x1b[32m✓\x1b[0m Removed global Claude hooks");
-    if (cleanup.db) console.log("  \x1b[32m✓\x1b[0m Removed global database");
-    if (!cleanup.cursor && !cleanup.claude && !cleanup.db) {
-      console.log("  \x1b[2m  No global install found\x1b[0m");
-    }
+  // Show global stats
+  console.log("  \x1b[1mGlobal Stats:\x1b[0m");
+  const globalStats = getStats();
+  console.log(`    Sessions: ${globalStats.sessions}`);
+  console.log(`    Prompts: ${globalStats.prompts}`);
+  console.log(`    Tool Calls: ${globalStats.toolCalls}`);
+
+  // Check if we're in a git repo
+  const repoRoot = await getRepoRoot(process.cwd());
+  if (repoRoot) {
+    const repoName = path.basename(repoRoot);
     console.log("");
+    console.log(`  \x1b[1mCurrent Repository:\x1b[0m ${repoName}`);
+
+    // Check for hooks
+    const cursorHooksPath = path.join(repoRoot, ".cursor", "hooks.json");
+    const claudeHooksPath = path.join(repoRoot, ".claude", "settings.json");
+
+    const hasCursorHooks = fs.existsSync(cursorHooksPath);
+    const hasClaudeHooks = fs.existsSync(claudeHooksPath);
+
+    // Detect git hooks setup
+    const hooksSetup = await detectHooksSetup(repoRoot);
+    const hasGitHook = await isGitHookInstalled(repoRoot);
+
+    console.log(`    Cursor hooks: ${hasCursorHooks ? "\x1b[32m✓\x1b[0m" : "\x1b[33m✗\x1b[0m"}`);
+    console.log(`    Claude hooks: ${hasClaudeHooks ? "\x1b[32m✓\x1b[0m" : "\x1b[33m✗\x1b[0m"}`);
+
+    if (hasGitHook) {
+      console.log(`    Git hook: \x1b[32m✓\x1b[0m (${hooksSetup.type})`);
+    } else {
+      console.log(`    Git hook: \x1b[33m✗\x1b[0m (auto-installs on first AI edit)`);
+    }
   }
+
+  console.log("");
+
+  logCommandSuccess("status");
+}
+
+/**
+ * Set up local machine for agentblame.
+ * Wipes and recreates global database and logs.
+ * Run once per machine (or to reset/update).
+ */
+async function runSetup(): Promise<void> {
+  logCommandStart("setup");
+
+  // Header
+  console.log("");
+  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame - Machine Setup\x1b[0m");
+  console.log("  \x1b[2mSetting up local machine (wipes existing data)\x1b[0m");
+  console.log("");
+
+  const globalDir = getGlobalAgentBlameDir();
+  console.log(`  \x1b[2mGlobal directory:\x1b[0m ${globalDir}`);
+  console.log("");
 
   // Track results
   const results: { name: string; success: boolean }[] = [];
 
-  // Remove editor hooks (repo-level)
-  const cursorSuccess = await uninstallCursorHooks(repoRoot);
-  results.push({ name: "Cursor hooks", success: cursorSuccess });
-
-  const claudeSuccess = await uninstallClaudeHooks(repoRoot);
-  results.push({ name: "Claude Code hooks", success: claudeSuccess });
-
-  const opencodeSuccess = await uninstallOpenCodeHooks(repoRoot);
-  results.push({ name: "OpenCode hooks", success: opencodeSuccess });
-
-  // Remove repo hooks and workflow
-  const gitHookSuccess = await uninstallGitHook(repoRoot);
-  results.push({ name: "Git post-commit hook", success: gitHookSuccess });
-
-  const notesPushSuccess = await removeNotesSync(repoRoot);
-  results.push({ name: "Notes auto-push", success: notesPushSuccess });
-
-  const githubActionSuccess = await uninstallGitHubAction(repoRoot);
-  results.push({ name: "GitHub Actions workflow", success: githubActionSuccess });
-
-  // Remove .git/agentblame directory (v3 location)
-  const agentBlameGitDir = getAgentBlameGitDir(repoRoot);
-  let dbSuccess = true;
+  // Wipe entire ~/.agentblame/ directory and recreate
   try {
-    if (fs.existsSync(agentBlameGitDir)) {
-      await fs.promises.rm(agentBlameGitDir, { recursive: true });
+    if (fs.existsSync(globalDir)) {
+      await fs.promises.rm(globalDir, { recursive: true });
     }
-  } catch {
-    dbSuccess = false;
+    results.push({ name: "Cleared existing data", success: true });
+  } catch (err) {
+    results.push({ name: "Clear existing data", success: false });
   }
-  results.push({ name: "Database (.git/agentblame/)", success: dbSuccess });
 
-  // Also remove legacy .agentblame directory
-  const legacyDir = path.join(repoRoot, ".agentblame");
+  // Recreate database
   try {
-    if (fs.existsSync(legacyDir)) {
-      await fs.promises.rm(legacyDir, { recursive: true });
-      results.push({ name: "Legacy database (.agentblame/)", success: true });
-    }
-  } catch {
-    // Ignore
+    wipeAndRecreateDatabase();
+    results.push({ name: "Database (~/.agentblame/agentblame.db)", success: true });
+  } catch (err) {
+    results.push({ name: "Database", success: false });
+  }
+
+  // Create logs directory
+  try {
+    const logsDir = path.join(globalDir, "logs");
+    await fs.promises.mkdir(logsDir, { recursive: true });
+    results.push({ name: "Logs directory (~/.agentblame/logs/)", success: true });
+  } catch (err) {
+    results.push({ name: "Logs directory", success: false });
   }
 
   // Print results
@@ -529,12 +438,17 @@ async function runClean(uninstallArgs: string[] = []): Promise<void> {
   console.log("");
 
   if (allSuccess) {
-    console.log("  \x1b[32m✓\x1b[0m \x1b[1mUninstall complete\x1b[0m");
+    console.log("  \x1b[32m✓\x1b[0m \x1b[1mSetup complete\x1b[0m");
+    console.log("");
+    console.log("  You're ready to track AI-generated code!");
+    console.log("  Run \x1b[36mbunx @mesadev/agentblame@latest setup\x1b[0m again to reset.");
   } else {
-    console.log("  \x1b[33m!\x1b[0m \x1b[1mUninstall completed with warnings\x1b[0m");
+    console.log("  \x1b[33m!\x1b[0m \x1b[1mSetup completed with warnings\x1b[0m");
   }
 
   console.log("");
+
+  logCommandSuccess("setup");
 }
 
 async function runBlame(args: string[]): Promise<void> {
@@ -660,13 +574,17 @@ async function runDebug(): Promise<void> {
     process.exit(1);
   }
 
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
+  // Initialize global database
+  initGlobalDatabase();
+
+  const repoId = getRepoIdentifier(repoRoot);
 
   console.log("\n\x1b[1mAgent Blame Debug Info\x1b[0m\n");
 
   // Show repo info
   console.log(`\x1b[36mRepository:\x1b[0m ${repoRoot}`);
+  console.log(`\x1b[36mRepo ID:\x1b[0m ${repoId}`);
+  console.log(`\x1b[36mGlobal DB:\x1b[0m ${getGlobalAgentBlameDir()}/agentblame.db`);
 
   // Show current HEAD
   const head = await getGitHead(repoRoot);
@@ -769,7 +687,7 @@ async function runDebug(): Promise<void> {
     }
   } else {
     console.log(`  \x1b[31mNot found:\x1b[0m ${agentBlameDir}`);
-    console.log("  Run 'agentblame init' to set up the database.");
+    console.log("  This directory will be created on first AI edit.");
   }
 
   console.log("");

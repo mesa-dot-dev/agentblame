@@ -14,7 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  setDatabasePath,
+  initGlobalDatabase,
   generateSessionId,
   upsertSession,
   insertPrompt,
@@ -22,13 +22,13 @@ import {
   promptExists,
   getLatestPromptForSession,
   hashPromptContent,
+  getRepoIdentifier,
 } from "./lib/database";
 import { getConfig } from "./lib/config";
 import {
   storeSnapshot,
   getGitHead,
   readFileContent,
-  getDatabasePath,
   ensureAgentBlameDirs,
   loadSnapshot,
   cleanupProcessedWorkingDirs,
@@ -42,6 +42,7 @@ import {
   loadCheckpoint,
 } from "./lib/checkpoint";
 import { normalizeModelName } from "./lib/util";
+import { ensureGitHook } from "./lib/hooks";
 import {
   computeDiff,
   appendDelta,
@@ -212,6 +213,7 @@ async function extractPromptFromTranscript(
 
 interface CaptureContext {
   repoRoot: string;
+  repoId: string;
   baseSha: string;
   agent: AiAgent;
   sessionId: string;
@@ -233,10 +235,14 @@ async function setupCaptureContext(
     return null;
   }
 
+  // Initialize global database and get repo identifier
+  initGlobalDatabase();
+  const repoId = getRepoIdentifier(repoRoot);
+
   ensureAgentBlameDirs(repoRoot);
 
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
+  // Lazily install git hook on first capture (auto-setup without running enable)
+  await ensureGitHook(repoRoot);
 
   const baseSha = await getGitHead(repoRoot);
   if (!baseSha) {
@@ -260,6 +266,7 @@ async function setupCaptureContext(
 
   return {
     repoRoot,
+    repoId,
     baseSha,
     agent,
     sessionId,
@@ -485,6 +492,7 @@ async function processCursorBeforeSubmitPrompt(
 
   upsertSession({
     id: ctx.sessionId,
+    repo: ctx.repoId,
     agent: "cursor",
     model: ctx.model,
     conversationId,
@@ -555,6 +563,7 @@ async function processCursorPayload(
 
   upsertSession({
     id: ctx.sessionId,
+    repo: ctx.repoId,
     agent: "cursor",
     model: ctx.model,
     conversationId,
@@ -633,6 +642,7 @@ async function processClaudePayload(payload: ClaudePayload): Promise<void> {
 
   upsertSession({
     id: ctx.sessionId,
+    repo: ctx.repoId,
     agent: "claude",
     model: ctx.model,
     conversationId,
@@ -726,6 +736,7 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
 
   upsertSession({
     id: ctx.sessionId,
+    repo: ctx.repoId,
     agent: "opencode",
     model: ctx.model,
     conversationId,

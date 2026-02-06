@@ -13,6 +13,7 @@ import { api } from "../lib/browser";
 import { MIN_SUPPORTED_VERSION } from "../types";
 import { getToken, isEnabled } from "../lib/storage";
 import { GitHubAPI } from "../lib/githubApi";
+import { logInfo, logError, logDebug } from "../lib/extensionLogger";
 import {
   extractPRContext,
   getDiffContainers,
@@ -61,11 +62,19 @@ let pendingProcess: ReturnType<typeof setTimeout> | null = null;
 async function initPRAttribution(): Promise<void> {
   // Check if enabled
   const enabled = await isEnabled();
-  if (!enabled) return;
+  if (!enabled) {
+    logDebug("router", "PR attribution disabled");
+    return;
+  }
 
   // Check for token
   const token = await getToken();
-  if (!token) return;
+  if (!token) {
+    logDebug("router", "No GitHub token configured");
+    return;
+  }
+
+  logInfo("router", "Starting PR attribution");
 
   // Initialize API client
   githubApi = new GitHubAPI(token);
@@ -152,6 +161,12 @@ async function processPRPage(): Promise<void> {
       let fileAiLines = 0;
       let fileTotal = 0;
 
+      // Collect lines with their attributions first
+      const linesWithAttr: Array<{
+        element: HTMLElement;
+        attr: LineAttribution | null;
+      }> = [];
+
       for (const line of addedLines) {
         let lineText = line.element.textContent || "";
         lineText = lineText.replace(/^[+-]/, "").trim();
@@ -161,10 +176,46 @@ async function processPRPage(): Promise<void> {
         fileTotal++;
 
         const attr = findAttribution(attributionMap, filePath, line.lineNumber);
+        linesWithAttr.push({ element: line.element, attr });
+
         if (attr) {
-          injectMarker(line.element, attr);
           fileAiLines++;
           aiGeneratedLines++;
+        }
+      }
+
+      // Group consecutive AI lines with same prompt, show badge only on middle line
+      let i = 0;
+      while (i < linesWithAttr.length) {
+        const { element, attr } = linesWithAttr[i];
+
+        if (!attr) {
+          i++;
+          continue;
+        }
+
+        // Find consecutive lines with same promptNumber
+        const groupStart = i;
+        const promptNum = attr.promptNumber;
+
+        while (
+          i < linesWithAttr.length &&
+          linesWithAttr[i].attr?.promptNumber === promptNum
+        ) {
+          i++;
+        }
+
+        const groupEnd = i;
+
+        // Inject markers: all get gutter bar, only first line gets badge
+        for (let j = groupStart; j < groupEnd; j++) {
+          const lineAttr = linesWithAttr[j].attr!;
+          const showBadge = j === groupStart;
+
+          injectMarker(linesWithAttr[j].element, {
+            ...lineAttr,
+            promptNumber: showBadge ? lineAttr.promptNumber : undefined,
+          });
         }
       }
 
@@ -180,7 +231,10 @@ async function processPRPage(): Promise<void> {
     });
 
     hasProcessedSuccessfully = true;
+    logInfo("router", `PR attribution complete: ${aiGeneratedLines}/${totalLines} lines AI-generated`);
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logError("router", `PR attribution failed: ${errorMsg}`);
     showError("Failed to load attribution data");
   } finally {
     isProcessing = false;
@@ -501,6 +555,8 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 function init(): void {
   // Quick exit if not on a repo page
   if (!isRepoPage()) return;
+
+  logInfo("router", `Initialized on ${window.location.pathname}`);
 
   // Set up navigation listener (once)
   setupNavigationListener();

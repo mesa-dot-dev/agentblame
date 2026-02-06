@@ -3,11 +3,15 @@
  *
  * Handles persistent storage of sessions, prompts, and tool calls.
  * Uses Bun's built-in SQLite for high-performance lookups.
+ *
+ * Database is stored globally at ~/.agentblame/agentblame.db
+ * Each session is namespaced by repo identifier.
  */
 
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { createHash } from "node:crypto";
 import type { AiAgent } from "./types";
 
@@ -17,6 +21,7 @@ import type { AiAgent } from "./types";
 
 export interface DbSession {
   id: string;
+  repo: string;  // Repo identifier for namespacing
   agent: AiAgent;
   model: string | null;
   conversationId: string | null;
@@ -46,9 +51,10 @@ export interface DbToolCall {
 // =============================================================================
 
 const SCHEMA = `
--- Sessions: One per AI conversation
+-- Sessions: One per AI conversation, namespaced by repo
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
+    repo TEXT NOT NULL,
     agent TEXT NOT NULL,
     model TEXT,
     conversation_id TEXT,
@@ -77,13 +83,94 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
+-- Enabled repos: Track which repos have agentblame enabled
+CREATE TABLE IF NOT EXISTS enabled_repos (
+    repo TEXT PRIMARY KEY,
+    enabled_at TEXT NOT NULL
+);
+
 -- Indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent, conversation_id);
 CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
 `;
+
+// =============================================================================
+// Global Paths
+// =============================================================================
+
+/**
+ * Get the global agentblame directory (~/.agentblame/)
+ */
+export function getGlobalAgentBlameDir(): string {
+  return path.join(os.homedir(), ".agentblame");
+}
+
+/**
+ * Get the global database path (~/.agentblame/agentblame.db)
+ */
+export function getGlobalDbPath(): string {
+  return path.join(getGlobalAgentBlameDir(), "agentblame.db");
+}
+
+/**
+ * Get the global logs directory (~/.agentblame/logs/)
+ */
+export function getGlobalLogsDir(): string {
+  return path.join(getGlobalAgentBlameDir(), "logs");
+}
+
+/**
+ * Ensure the global agentblame directory structure exists
+ */
+export function ensureGlobalAgentBlameDir(): void {
+  const globalDir = getGlobalAgentBlameDir();
+  const logsDir = getGlobalLogsDir();
+
+  if (!fs.existsSync(globalDir)) {
+    fs.mkdirSync(globalDir, { recursive: true });
+  }
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+}
+
+/**
+ * Generate a repo identifier from the repo root path
+ * Uses the git remote URL if available, otherwise the path
+ */
+export function getRepoIdentifier(repoRoot: string): string {
+  // Try to get remote URL first
+  try {
+    const { execSync } = require("node:child_process");
+    const remoteUrl = execSync("git remote get-url origin", {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (remoteUrl) {
+      // Normalize the URL: remove .git suffix, convert to lowercase
+      // Examples: git@github.com:org/repo.git -> github.com/org/repo
+      //           https://github.com/org/repo.git -> github.com/org/repo
+      let normalized = remoteUrl
+        .replace(/\.git$/, "")
+        .replace(/^git@/, "")
+        .replace(/^https?:\/\//, "")
+        .replace(":", "/")
+        .toLowerCase();
+      return normalized;
+    }
+  } catch {
+    // No remote, fall back to path
+  }
+
+  // Fall back to repo path
+  return repoRoot;
+}
 
 // =============================================================================
 // Database Connection
@@ -94,6 +181,7 @@ let currentDbPath: string | null = null;
 
 /**
  * Set the database path directly.
+ * For most cases, use initGlobalDatabase() instead.
  */
 export function setDatabasePath(dbPath: string): void {
   if (currentDbPath !== dbPath) {
@@ -106,11 +194,26 @@ export function setDatabasePath(dbPath: string): void {
 }
 
 /**
+ * Initialize the global database
+ * This is the primary way to initialize the database.
+ * Throws if DB doesn't exist - user must run 'setup' first.
+ */
+export function initGlobalDatabase(): void {
+  const dbPath = getGlobalDbPath();
+  if (!fs.existsSync(dbPath)) {
+    throw new Error("Database not found. Run 'bunx @mesadev/agentblame@latest setup' first.");
+  }
+  setDatabasePath(dbPath);
+  initDatabase();
+}
+
+/**
  * Get the database file path
+ * Throws if DB not initialized - user must run 'setup' first.
  */
 export function getDbPath(): string {
   if (!currentDbPath) {
-    throw new Error("Database path not set. Call setDatabasePath() first.");
+    throw new Error("Database not initialized. Run 'bunx @mesadev/agentblame@latest setup' first.");
   }
   return currentDbPath;
 }
@@ -135,6 +238,9 @@ export function getDatabase(): Database {
   dbInstance.exec("PRAGMA journal_mode = WAL");
   dbInstance.exec("PRAGMA busy_timeout = 5000");
   dbInstance.exec(SCHEMA);
+
+  // Run migrations to ensure schema is up to date
+  runMigrations(dbInstance);
 
   return dbInstance;
 }
@@ -165,7 +271,34 @@ export function resetDatabase(): void {
   db.exec("DROP TABLE IF EXISTS tool_calls");
   db.exec("DROP TABLE IF EXISTS prompts");
   db.exec("DROP TABLE IF EXISTS sessions");
+  db.exec("DROP TABLE IF EXISTS enabled_repos");
   db.exec(SCHEMA);
+}
+
+/**
+ * Migrate old database schema to new schema (internal use)
+ * Adds 'repo' column to sessions if it doesn't exist
+ */
+function runMigrations(db: Database): void {
+  // Check if repo column exists
+  const tableInfo = db.prepare("PRAGMA table_info(sessions)").all() as any[];
+  const hasRepoColumn = tableInfo.some((col) => col.name === "repo");
+
+  if (!hasRepoColumn) {
+    // Add repo column with default value (empty string for legacy data)
+    db.exec("ALTER TABLE sessions ADD COLUMN repo TEXT NOT NULL DEFAULT ''");
+  }
+
+  // Ensure enabled_repos table exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS enabled_repos (
+      repo TEXT PRIMARY KEY,
+      enabled_at TEXT NOT NULL
+    )
+  `);
+
+  // Create new indexes if they don't exist
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo)");
 }
 
 // =============================================================================
@@ -187,6 +320,7 @@ export function generateSessionId(agent: AiAgent, conversationId: string): strin
 
 export interface UpsertSessionParams {
   id: string;
+  repo: string;  // Repo identifier for namespacing
   agent: AiAgent;
   model?: string | null;
   conversationId?: string | null;
@@ -198,13 +332,14 @@ export interface UpsertSessionParams {
 export function upsertSession(params: UpsertSessionParams): void {
   const db = getDatabase();
   const stmt = db.prepare(`
-    INSERT INTO sessions (id, agent, model, conversation_id, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, repo, agent, model, conversation_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       model = COALESCE(excluded.model, sessions.model)
   `);
   stmt.run(
     params.id,
+    params.repo,
     params.agent,
     params.model ?? null,
     params.conversationId ?? null,
@@ -529,6 +664,86 @@ export function getStats(): { sessions: number; prompts: number; toolCalls: numb
   return { sessions, prompts, toolCalls };
 }
 
+/**
+ * Get stats for a specific repo
+ */
+export function getStatsForRepo(repo: string): { sessions: number; prompts: number; toolCalls: number } {
+  const db = getDatabase();
+  const sessions = (db.prepare("SELECT COUNT(*) as count FROM sessions WHERE repo = ?").get(repo) as any).count;
+  const prompts = (db.prepare(`
+    SELECT COUNT(*) as count FROM prompts
+    WHERE session_id IN (SELECT id FROM sessions WHERE repo = ?)
+  `).get(repo) as any).count;
+  const toolCalls = (db.prepare(`
+    SELECT COUNT(*) as count FROM tool_calls
+    WHERE session_id IN (SELECT id FROM sessions WHERE repo = ?)
+  `).get(repo) as any).count;
+  return { sessions, prompts, toolCalls };
+}
+
+// =============================================================================
+// Enabled Repos Operations
+// =============================================================================
+
+/**
+ * Register a repo as enabled
+ */
+export function enableRepo(repo: string): void {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO enabled_repos (repo, enabled_at)
+    VALUES (?, ?)
+    ON CONFLICT(repo) DO UPDATE SET enabled_at = excluded.enabled_at
+  `);
+  stmt.run(repo, new Date().toISOString());
+}
+
+/**
+ * Unregister a repo
+ */
+export function disableRepo(repo: string): void {
+  const db = getDatabase();
+  db.prepare("DELETE FROM enabled_repos WHERE repo = ?").run(repo);
+}
+
+/**
+ * Check if a repo is enabled
+ */
+export function isRepoEnabled(repo: string): boolean {
+  const db = getDatabase();
+  const result = db.prepare("SELECT 1 FROM enabled_repos WHERE repo = ? LIMIT 1").get(repo);
+  return result !== undefined && result !== null;
+}
+
+/**
+ * Get all enabled repos
+ */
+export function getEnabledRepos(): Array<{ repo: string; enabledAt: string }> {
+  const db = getDatabase();
+  const rows = db.prepare("SELECT repo, enabled_at FROM enabled_repos ORDER BY enabled_at DESC").all() as any[];
+  return rows.map(row => ({ repo: row.repo, enabledAt: row.enabled_at }));
+}
+
+/**
+ * Wipe all data and recreate fresh database
+ * Used by 'agentblame clean'
+ */
+export function wipeAndRecreateDatabase(): void {
+  closeDatabase();
+
+  const globalDir = getGlobalAgentBlameDir();
+
+  // Remove entire directory
+  if (fs.existsSync(globalDir)) {
+    fs.rmSync(globalDir, { recursive: true });
+  }
+
+  // Recreate fresh (directly create DB, bypassing existence check)
+  ensureGlobalAgentBlameDir();
+  setDatabasePath(getGlobalDbPath());
+  initDatabase();
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -536,6 +751,7 @@ export function getStats(): { sessions: number; prompts: number; toolCalls: numb
 function rowToSession(row: any): DbSession {
   return {
     id: row.id,
+    repo: row.repo,
     agent: row.agent as AiAgent,
     model: row.model,
     conversationId: row.conversation_id,
