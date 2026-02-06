@@ -12,7 +12,7 @@ import {
 import { getCommitDiff, parseDiff } from "./lib/git/gitDiff";
 import { attachNote, fetchNotesQuiet } from "./lib/git/gitNotes";
 import {
-  setDatabasePath,
+  initGlobalDatabase,
   getSession,
   getConcatenatedPromptsForSession,
   getPromptsWithToolCounts,
@@ -20,7 +20,6 @@ import {
 } from "./lib/database";
 import {
   getParentCommit,
-  getDatabasePath,
   cleanupWorkingDir,
 } from "./lib/storage";
 import {
@@ -328,9 +327,8 @@ export async function runProcess(sha?: string): Promise<void> {
     process.exit(1);
   }
 
-  // Set up database directory for this repo
-  const dbPath = getDatabasePath(repoRoot);
-  setDatabasePath(dbPath);
+  // Initialize global database
+  initGlobalDatabase();
 
   // Fetch remote notes first to avoid push conflicts
   await fetchNotesQuiet(repoRoot);

@@ -1003,9 +1003,9 @@ function updateRepositoryAnalytics(mergeType: MergeType): void {
 }
 
 /**
- * Main entry point
+ * Main entry point - exported for CLI
  */
-async function main(): Promise<void> {
+export async function runPostMerge(): Promise<void> {
   log("Agent Blame - Transfer Notes");
   log(`PR #${PR_NUMBER}: ${PR_TITLE}`);
   log(`Base: ${BASE_SHA.slice(0, 7)}, Head: ${HEAD_SHA.slice(0, 7)}, Merge: ${MERGE_SHA.slice(0, 7)}`);
@@ -1041,7 +1041,5 @@ async function main(): Promise<void> {
   log("Done");
 }
 
-main().catch((err) => {
-  console.error("[agentblame] Error:", err);
-  process.exit(1);
-});
+// Note: This can be run via CLI with `agentblame post-merge`
+// or directly via bunx: `bunx @mesadev/agentblame post-merge`

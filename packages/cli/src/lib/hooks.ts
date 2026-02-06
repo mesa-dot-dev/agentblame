@@ -39,14 +39,16 @@ export function getOpenCodePluginPath(repoRoot: string): string {
 
 /**
  * Generate the hook command for a given provider.
- * Uses the globally installed agentblame command.
+ * Uses bunx to run agentblame - no global install required.
+ * Fails silently if bunx/bun is not available.
  */
 function getHookCommand(
   provider: "cursor" | "claude",
   event?: string
 ): string {
   const eventArg = event ? ` --event ${event}` : "";
-  return `agentblame capture --provider ${provider}${eventArg}`;
+  // Use bunx to run agentblame (cached, fast) - fail silently if bun not installed
+  return `command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame capture --provider ${provider}${eventArg} 2>/dev/null || true`;
 }
 
 /**
@@ -68,9 +70,19 @@ const sessionPrompts = new Map<string, string>()
 const sessionModels = new Map<string, string>()
 
 export default (async (ctx) => {
+  // Check if bunx is available (for running agentblame)
+  let hasBunx = false
+  try {
+    execSync("command -v bunx", { stdio: "pipe" })
+    hasBunx = true
+  } catch {
+    // bunx not installed - all captures will be no-ops
+  }
+
   function capture(payload: any): void {
+    if (!hasBunx) return  // Skip if bunx not installed
     try {
-      execSync("agentblame capture --provider opencode", {
+      execSync("bunx @mesadev/agentblame capture --provider opencode", {
         input: JSON.stringify(payload),
         cwd: ctx.directory || process.cwd(),
         stdio: ["pipe", "inherit", "inherit"],
@@ -441,6 +453,131 @@ export async function installAllHooks(
 }
 
 /**
+ * Detected git hooks setup type
+ */
+export type HooksSetupType =
+  | { type: "custom"; path: string }
+  | { type: "standard"; path: string };
+
+/**
+ * Detect where git hooks should be installed.
+ * Simple approach:
+ *   1. Check core.hooksPath (explicit git config - works for husky, lefthook, custom setups)
+ *   2. Fall back to .git/hooks/ (standard location)
+ */
+export async function detectHooksSetup(repoRoot: string): Promise<HooksSetupType> {
+  // Check for custom hooks path via git config (core.hooksPath)
+  // This catches husky, lefthook, and any custom setup
+  try {
+    const { execSync } = await import("node:child_process");
+    const customPath = execSync("git config core.hooksPath", {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (customPath) {
+      const absolutePath = path.isAbsolute(customPath)
+        ? customPath
+        : path.join(repoRoot, customPath);
+      return { type: "custom", path: absolutePath };
+    }
+  } catch {
+    // No custom hooks path configured
+  }
+
+  // Fall back to standard .git/hooks/
+  return { type: "standard", path: path.join(repoRoot, ".git", "hooks") };
+}
+
+/**
+ * Check if git hook is already installed
+ */
+export async function isGitHookInstalled(repoRoot: string): Promise<boolean> {
+  const setup = await detectHooksSetup(repoRoot);
+  const hookPath = path.join(setup.path, "post-commit");
+
+  try {
+    const content = await fs.promises.readFile(hookPath, "utf8");
+    return content.includes("agentblame");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lazily install git hook on first capture.
+ * Called from capture command to auto-setup without user running enable.
+ */
+export async function ensureGitHook(repoRoot: string): Promise<void> {
+  const installed = await isGitHookInstalled(repoRoot);
+  if (!installed) {
+    await installGitHookSmart(repoRoot);
+  }
+}
+
+/**
+ * Install git hook by detecting existing setup and integrating appropriately.
+ * Simple approach:
+ *   1. Detect hooks directory (core.hooksPath or .git/hooks/)
+ *   2. Create/append to post-commit hook there
+ */
+export async function installGitHookSmart(
+  repoRoot: string
+): Promise<{ success: boolean; method: string }> {
+  const setup = await detectHooksSetup(repoRoot);
+  const hooksDir = setup.path;
+  const hookPath = path.join(hooksDir, "post-commit");
+  const methodName = setup.type === "custom"
+    ? `custom (${path.basename(hooksDir)}/)`
+    : ".git/hooks/";
+
+  try {
+    // Ensure hooks directory exists
+    await fs.promises.mkdir(hooksDir, { recursive: true });
+
+    let existingContent = "";
+    try {
+      existingContent = await fs.promises.readFile(hookPath, "utf8");
+    } catch {
+      // File doesn't exist
+    }
+
+    // Check if already installed
+    if (existingContent.includes("agentblame")) {
+      return { success: true, method: `${methodName} (already installed)` };
+    }
+
+    // Remove old agentblame section if present (for updates)
+    if (existingContent.includes("Agent Blame")) {
+      existingContent = removeAgentBlameSection(existingContent);
+    }
+
+    // Our hook script
+    const agentblameScript = `# Agent Blame - Auto-process commits for AI attribution
+# Silently skips if bunx is not installed
+command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame process HEAD 2>/dev/null || true
+
+# Push notes to remote (silently fails if no notes or no remote)
+git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true`;
+
+    if (existingContent.trim()) {
+      // Append to existing hook
+      const newContent = existingContent.trimEnd() + "\n\n" + agentblameScript + "\n";
+      await fs.promises.writeFile(hookPath, newContent, { mode: 0o755 });
+    } else {
+      // Create new hook
+      const newContent = `#!/bin/sh\n${agentblameScript}\n`;
+      await fs.promises.writeFile(hookPath, newContent, { mode: 0o755 });
+    }
+
+    return { success: true, method: methodName };
+  } catch (err) {
+    console.error("Failed to install git hook:", err);
+    return { success: false, method: methodName };
+  }
+}
+
+/**
  * Install git post-commit hook to auto-process commits (per-repo)
  * Always installs/updates the hook - removes old agentblame section if present and adds latest
  */
@@ -448,10 +585,11 @@ export async function installGitHook(repoRoot: string): Promise<boolean> {
   const hooksDir = path.join(repoRoot, ".git", "hooks");
   const hookPath = path.join(hooksDir, "post-commit");
 
-  // Use the globally installed agentblame command
+  // Use bunx to run agentblame (cached, fast) - fail silently if bun not installed
   const hookContent = `#!/bin/sh
 # Agent Blame - Auto-process commits for AI attribution
-agentblame process HEAD 2>/dev/null || true
+# Silently skips if bunx is not installed
+command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame process HEAD 2>/dev/null || true
 
 # Push notes to remote (silently fails if no notes or no remote)
 git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || true
@@ -647,20 +785,20 @@ on:
     types: [closed]
 
 jobs:
-  post-merge:
-    # Only run if the PR was merged (not just closed)
+  agent-blame-post-merge:
+    name: Agent Blame - Post Merge Attribution
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write  # Needed to push notes
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history needed for notes and blame
-          ref: \${{ github.event.pull_request.base.ref }}  # Checkout target branch (e.g., main)
+          fetch-depth: 0
+          ref: \${{ github.event.pull_request.base.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -670,18 +808,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install agentblame
-        run: npm install -g @mesadev/agentblame
-
-      - name: Fetch notes, tags, and PR head
+      - name: Agent Blame - Fetch attribution data
         run: |
           git fetch origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null || echo "No existing attribution notes"
           git fetch origin refs/notes/agentblame-analytics:refs/notes/agentblame-analytics 2>/dev/null || echo "No existing analytics notes"
           git fetch origin --tags 2>/dev/null || echo "No tags to fetch"
           git fetch origin refs/pull/\${{ github.event.pull_request.number }}/head:refs/pull/\${{ github.event.pull_request.number }}/head 2>/dev/null || echo "Could not fetch PR head"
 
-      - name: Process merge (transfer notes + update analytics)
-        run: bun \$(npm root -g)/@mesadev/agentblame/dist/post-merge.js
+      - name: Agent Blame - Transfer attribution to merge commit
+        run: bunx @mesadev/agentblame@latest post-merge
         env:
           PR_NUMBER: \${{ github.event.pull_request.number }}
           PR_TITLE: \${{ github.event.pull_request.title }}
@@ -692,13 +827,10 @@ jobs:
           MERGE_SHA: \${{ github.event.pull_request.merge_commit_sha }}
           MERGED_AT: \${{ github.event.pull_request.merged_at }}
 
-      - name: Push notes and tags
+      - name: Agent Blame - Push attribution notes
         run: |
-          # Push attribution notes
           git push origin refs/notes/agentblame 2>/dev/null || echo "No attribution notes to push"
-          # Push analytics notes
           git push origin refs/notes/agentblame-analytics 2>/dev/null || echo "No analytics notes to push"
-          # Push analytics anchor tag
           git push origin agentblame-analytics-anchor 2>/dev/null || echo "No analytics tag to push"
 `;
 

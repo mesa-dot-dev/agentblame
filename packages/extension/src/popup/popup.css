@@ -317,3 +317,51 @@ footer a:hover {
 .version {
   color: #57606a;
 }
+
+/* Logs section */
+.logs-section {
+  margin-top: 8px;
+}
+
+.logs-section summary {
+  cursor: pointer;
+  color: #57606a;
+  font-size: 12px;
+}
+
+.logs-container {
+  margin-top: 8px;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.logs-header select {
+  padding: 4px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.logs-content {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 10px;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.btn.small {
+  padding: 4px 8px;
+  font-size: 11px;
+}

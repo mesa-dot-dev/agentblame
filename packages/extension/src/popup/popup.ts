@@ -11,6 +11,13 @@ import {
   validateToken,
 } from "../lib/storage";
 import { api } from "../lib/browser";
+import {
+  getTodayLogs,
+  getLogDates,
+  getLogsForDate,
+  clearAllLogs,
+  logInfo,
+} from "../lib/extensionLogger";
 
 // DOM Elements - these are guaranteed to exist in popup.html
 const statusIndicator = document.getElementById("status-indicator");
@@ -23,6 +30,12 @@ const tokenStatus = document.getElementById("token-status");
 const enabledToggle = document.getElementById(
   "enabled-toggle",
 ) as HTMLInputElement;
+
+// Logs elements
+const logsDetails = document.getElementById("logs-details") as HTMLDetailsElement;
+const logsDateSelect = document.getElementById("logs-date-select") as HTMLSelectElement;
+const logsContent = document.getElementById("logs-content") as HTMLPreElement;
+const clearLogsBtn = document.getElementById("clear-logs-btn") as HTMLButtonElement;
 
 if (!statusIndicator || !statusText || !toggleVisibility || !tokenStatus) {
   throw new Error("Required DOM elements not found");
@@ -171,11 +184,84 @@ async function handleEnabledChange(): Promise<void> {
   }
 }
 
+/**
+ * Load logs dates into the select dropdown
+ */
+async function loadLogsDates(): Promise<void> {
+  const dates = await getLogDates();
+  logsDateSelect.innerHTML = "";
+
+  if (dates.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No logs";
+    logsDateSelect.appendChild(option);
+    logsContent.textContent = "No logs available.";
+    return;
+  }
+
+  for (const date of dates) {
+    const option = document.createElement("option");
+    option.value = date;
+    option.textContent = date;
+    logsDateSelect.appendChild(option);
+  }
+
+  // Load logs for the first date (today)
+  await loadLogsForSelectedDate();
+}
+
+/**
+ * Load logs for the selected date
+ */
+async function loadLogsForSelectedDate(): Promise<void> {
+  const date = logsDateSelect.value;
+  if (!date) {
+    logsContent.textContent = "No logs available.";
+    return;
+  }
+
+  const logs = await getLogsForDate(date);
+  if (logs.length === 0) {
+    logsContent.textContent = "No logs for this date.";
+  } else {
+    logsContent.textContent = logs.join("\n");
+    // Scroll to bottom
+    logsContent.scrollTop = logsContent.scrollHeight;
+  }
+}
+
+/**
+ * Handle clear logs button
+ */
+async function handleClearLogs(): Promise<void> {
+  await clearAllLogs();
+  logsContent.textContent = "Logs cleared.";
+  await loadLogsDates();
+}
+
 // Event listeners
 saveBtn.addEventListener("click", handleSave);
 clearBtn.addEventListener("click", handleClear);
 toggleVisibility.addEventListener("click", handleToggleVisibility);
 enabledToggle.addEventListener("change", handleEnabledChange);
+
+// Logs event listeners
+if (logsDetails) {
+  logsDetails.addEventListener("toggle", () => {
+    if (logsDetails.open) {
+      loadLogsDates();
+    }
+  });
+}
+
+if (logsDateSelect) {
+  logsDateSelect.addEventListener("change", loadLogsForSelectedDate);
+}
+
+if (clearLogsBtn) {
+  clearLogsBtn.addEventListener("click", handleClearLogs);
+}
 
 // Allow Enter key to save
 tokenInput.addEventListener("keydown", (e) => {
@@ -190,6 +276,9 @@ tokenInput.addEventListener("focus", () => {
     tokenInput.value = "";
   }
 });
+
+// Log popup opened
+logInfo("popup", "Popup opened");
 
 // Initialize on load
 init();

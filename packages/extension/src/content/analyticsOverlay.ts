@@ -535,15 +535,10 @@ function renderStatsSection(analytics: AnalyticsData): string {
   const humanPercent = summary.totalLines > 0
     ? Math.round((summary.humanLines / summary.totalLines) * 100)
     : 0;
-  const unknownPercent = summary.totalLines > 0
-    ? Math.round((unknownLines / summary.totalLines) * 100)
-    : 0;
 
   // Prompt efficiency: commits / prompts (higher = better, 1.0 = ideal)
   const efficiency = summary.prompts > 0 ? (summary.commits / summary.prompts) : 0;
-  const efficiencyStr = efficiency > 0 ? efficiency.toFixed(2) : "0";
-  // Use distinct colors: blue (good) -> amber (medium) -> muted (poor)
-  const ratioColor = efficiency >= 0.67 ? "#539BF5" : efficiency >= 0.4 ? "#C69026" : "#8b949e";
+  const efficiencyStr = efficiency > 0 ? efficiency.toFixed(2) : "—";
 
   // Build tool breakdown
   const toolEntries = Object.entries(summary.tools || {})
@@ -555,92 +550,82 @@ function renderStatsSection(analytics: AnalyticsData): string {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 5);
 
-  // Distinct colors for each card type (mid-tone, works on light & dark)
-  const aiColor = "#E07B53";      // Coral/orange
-  const humanColor = "#57AB5A";   // Green
-  const unknownColor = "#8b949e"; // Gray
-  const totalColor = "#A371F7";   // Purple
-
-  // Donut ring SVG helper (percentage as arc)
-  const donutRing = (percent: number, color: string, size: number = 56) => {
-    const r = (size - 6) / 2;
-    const circ = 2 * Math.PI * r;
-    const offset = circ - (percent / 100) * circ;
-    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform: rotate(-90deg);">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--color-border-default)" stroke-width="5" />
-      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${offset}" />
-    </svg>`;
-  };
-
-  // Stacked bar for AI vs Human split
-  const splitBar = `
-    <div style="display: flex; height: 6px; border-radius: 3px; overflow: hidden; width: 100%; margin-top: 12px;">
-      <div style="width: ${aiPercent}%; background: ${aiColor};"></div>
-      <div style="width: ${humanPercent}%; background: ${humanColor};"></div>
-      ${unknownLines > 0 ? `<div style="width: ${unknownPercent}%; background: ${unknownColor};"></div>` : ''}
-    </div>
-  `;
+  // Colors
+  const aiColor = "#E07B53";
+  const humanColor = "#57AB5A";
 
   return `
-    <!-- Summary Hero -->
-    <div class="Box mb-4">
-      <div class="Box-body" style="padding: 24px;">
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;">
+    <!-- Stats Cards Grid -->
+    <div class="mb-4" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
 
-          <!-- AI-Generated -->
-          <div style="text-align: center;">
-            <div style="display: inline-block; position: relative;">
-              ${donutRing(aiPercent, aiColor)}
-              <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
-                <span style="font-size: 15px; font-weight: 700; color: ${aiColor};">${aiPercent}%</span>
-              </div>
-            </div>
-            <div class="f5 text-bold mt-2" style="color: ${aiColor};">AI-Generated</div>
-            <div class="f6 color-fg-muted">${summary.aiLines.toLocaleString()} lines</div>
+      <!-- AI-Generated Card -->
+      <div style="background: linear-gradient(135deg, rgba(224, 123, 83, 0.15) 0%, rgba(224, 123, 83, 0.05) 100%); border: 1px solid rgba(224, 123, 83, 0.3); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(224, 123, 83, 0.1); border-radius: 50%;"></div>
+        <div style="position: relative;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: ${aiColor}; opacity: 0.8; margin-bottom: 8px;">AI-Generated</div>
+          <div style="display: flex; align-items: baseline; gap: 4px;">
+            <span style="font-size: 36px; font-weight: 800; color: ${aiColor}; line-height: 1; letter-spacing: -2px;">${aiPercent}</span>
+            <span style="font-size: 18px; font-weight: 700; color: ${aiColor}; opacity: 0.7;">%</span>
           </div>
-
-          <!-- Human-Written -->
-          <div style="text-align: center;">
-            <div style="display: inline-block; position: relative;">
-              ${donutRing(humanPercent, humanColor)}
-              <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
-                <span style="font-size: 15px; font-weight: 700; color: ${humanColor};">${humanPercent}%</span>
-              </div>
-            </div>
-            <div class="f5 text-bold mt-2" style="color: ${humanColor};">Human-Written</div>
-            <div class="f6 color-fg-muted">${summary.humanLines.toLocaleString()} lines</div>
-          </div>
-
-          <!-- Total Lines -->
-          <div style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-            <div style="font-size: 32px; font-weight: 800; color: ${totalColor}; line-height: 1; letter-spacing: -1px;">${summary.totalLines.toLocaleString()}</div>
-            <div class="f5 text-bold mt-2" style="color: ${totalColor};">Total Lines</div>
-            <div class="f6 color-fg-muted">tracked in repository</div>
-          </div>
-
-          <!-- Prompt Efficiency -->
-          <div style="text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-            <div style="font-size: 32px; font-weight: 800; color: ${ratioColor}; line-height: 1; letter-spacing: -1px;">${efficiencyStr}</div>
-            <div class="f5 text-bold mt-2" style="color: ${ratioColor};">Prompt Efficiency</div>
-            <div class="f6 color-fg-muted">${summary.commits} commits · ${summary.prompts} prompts</div>
-          </div>
-
+          <div style="font-size: 13px; color: var(--color-fg-muted); margin-top: 4px;">${summary.aiLines.toLocaleString()} lines</div>
         </div>
+      </div>
 
-        <!-- Stacked split bar -->
-        ${splitBar}
-        <div class="d-flex flex-justify-between mt-1">
-          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
-            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${aiColor}; display: inline-block;"></span> AI ${aiPercent}%
+      <!-- Human-Written Card -->
+      <div style="background: linear-gradient(135deg, rgba(87, 171, 90, 0.15) 0%, rgba(87, 171, 90, 0.05) 100%); border: 1px solid rgba(87, 171, 90, 0.3); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(87, 171, 90, 0.1); border-radius: 50%;"></div>
+        <div style="position: relative;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: ${humanColor}; opacity: 0.8; margin-bottom: 8px;">Human-Written</div>
+          <div style="display: flex; align-items: baseline; gap: 4px;">
+            <span style="font-size: 36px; font-weight: 800; color: ${humanColor}; line-height: 1; letter-spacing: -2px;">${humanPercent}</span>
+            <span style="font-size: 18px; font-weight: 700; color: ${humanColor}; opacity: 0.7;">%</span>
           </div>
-          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
-            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${humanColor}; display: inline-block;"></span> Human ${humanPercent}%
+          <div style="font-size: 13px; color: var(--color-fg-muted); margin-top: 4px;">${summary.humanLines.toLocaleString()} lines</div>
+        </div>
+      </div>
+
+      <!-- Total Lines Card -->
+      <div style="background: linear-gradient(135deg, rgba(163, 113, 247, 0.15) 0%, rgba(163, 113, 247, 0.05) 100%); border: 1px solid rgba(163, 113, 247, 0.3); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(163, 113, 247, 0.1); border-radius: 50%;"></div>
+        <div style="position: relative;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #A371F7; opacity: 0.8; margin-bottom: 8px;">Total Lines</div>
+          <div style="font-size: 36px; font-weight: 800; color: #A371F7; line-height: 1; letter-spacing: -2px;">${summary.totalLines.toLocaleString()}</div>
+          <div style="font-size: 13px; color: var(--color-fg-muted); margin-top: 4px;">tracked in repository</div>
+        </div>
+      </div>
+
+      <!-- Prompt Efficiency Card -->
+      <div style="background: linear-gradient(135deg, rgba(83, 155, 245, 0.15) 0%, rgba(83, 155, 245, 0.05) 100%); border: 1px solid rgba(83, 155, 245, 0.3); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(83, 155, 245, 0.1); border-radius: 50%;"></div>
+        <div style="position: relative;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #539BF5; opacity: 0.8; margin-bottom: 8px;">Efficiency</div>
+          <div style="font-size: 36px; font-weight: 800; color: #539BF5; line-height: 1; letter-spacing: -2px;">${efficiencyStr}</div>
+          <div style="font-size: 13px; color: var(--color-fg-muted); margin-top: 4px;">${summary.commits} commits · ${summary.prompts} prompts</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Distribution Bar -->
+    <div class="Box mb-4">
+      <div class="Box-body" style="padding: 16px 20px;">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <div style="flex: 1;">
+            <div style="display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--color-canvas-subtle);">
+              <div style="width: ${aiPercent}%; background: ${aiColor}; transition: width 0.3s ease;"></div>
+              <div style="width: ${humanPercent}%; background: ${humanColor}; transition: width 0.3s ease;"></div>
+            </div>
           </div>
-          ${unknownLines > 0 ? `
-          <div class="d-flex flex-items-center gap-1 f6 color-fg-muted">
-            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${unknownColor}; display: inline-block;"></span> Untracked ${unknownPercent}%
+          <div style="display: flex; gap: 16px; flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="width: 10px; height: 10px; border-radius: 3px; background: ${aiColor};"></span>
+              <span style="font-size: 12px; color: var(--color-fg-muted);">AI ${aiPercent}%</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="width: 10px; height: 10px; border-radius: 3px; background: ${humanColor};"></span>
+              <span style="font-size: 12px; color: var(--color-fg-muted);">Human ${humanPercent}%</span>
+            </div>
           </div>
-          ` : ''}
         </div>
       </div>
     </div>
