@@ -158,7 +158,8 @@ async function processPage(): Promise<void> {
     // Get PR commits
     if (!githubApi) {
       log("API client not initialized");
-      hideLoading();
+      showError("GitHub API not initialized · check token in extension settings");
+      hasProcessedSuccessfully = true;
       return;
     }
 
@@ -169,7 +170,8 @@ async function processPage(): Promise<void> {
     );
     if (commits.length === 0) {
       log("No commits found for PR");
-      hideLoading();
+      showError("No commits found for this PR");
+      hasProcessedSuccessfully = true;
       return;
     }
 
@@ -183,6 +185,13 @@ async function processPage(): Promise<void> {
     );
 
     hideLoading();
+
+    // Check for API errors (auth, rate limit, etc.)
+    if (notesResult.error) {
+      showError(notesResult.error.message);
+      hasProcessedSuccessfully = true;
+      return;
+    }
 
     // Check for unsupported versions
     if (notesResult.hasUnsupportedVersions) {

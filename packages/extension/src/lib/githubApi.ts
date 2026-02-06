@@ -23,6 +23,11 @@ export interface NotesResult {
     totalCommits: number;
     commitsWithNotes: number;
   };
+  // Error info for user-facing messages
+  error?: {
+    type: "unauthorized" | "forbidden" | "rate_limited" | "network" | "unknown";
+    message: string;
+  };
 }
 
 // Debug logging - disabled in production
@@ -66,9 +71,24 @@ interface GitBlob {
 export class GitHubAPI {
   private token: string;
   private cache: Map<string, GitNotesAttribution> = new Map();
+  private lastError: NotesResult["error"] | null = null;
 
   constructor(token: string) {
     this.token = token;
+  }
+
+  /**
+   * Clear last error
+   */
+  private clearError(): void {
+    this.lastError = null;
+  }
+
+  /**
+   * Set error for user-facing display
+   */
+  private setError(type: NonNullable<NotesResult["error"]>["type"], message: string): void {
+    this.lastError = { type, message };
   }
 
   /**
@@ -102,12 +122,20 @@ export class GitHubAPI {
         if (response.status === 429) {
           const retryAfter = response.headers.get("Retry-After");
           logError(`Rate limited. Retry after ${retryAfter || "unknown"}s`);
+          this.setError("rate_limited", `Rate limited. Try again in ${retryAfter || "a few"} seconds`);
           return null;
         }
         if (response.status === 401) {
           logError("Unauthorized (401) - token may be invalid or expired");
+          this.setError("unauthorized", "GitHub token is invalid or expired");
           return null;
         }
+        if (response.status === 403) {
+          logError("Forbidden (403) - token may not have access to this repo");
+          this.setError("forbidden", "Token doesn't have access to this repository");
+          return null;
+        }
+        this.setError("unknown", `GitHub API error: ${response.status}`);
         throw new Error(`GitHub API error: ${response.status}`);
       }
 
@@ -117,8 +145,10 @@ export class GitHubAPI {
       clearTimeout(timeoutId);
       if (error instanceof Error && error.name === "AbortError") {
         logError(`Timeout for ${endpoint}`);
+        this.setError("network", "Request timed out");
       } else {
         logError(`Error for ${endpoint}:`, error);
+        this.setError("network", "Network error - check your connection");
       }
       return null;
     }
@@ -448,6 +478,7 @@ export class GitHubAPI {
     repo: string,
     commits: string[],
   ): Promise<NotesResult> {
+    this.clearError(); // Reset any previous errors
     const notes = new Map<string, GitNotesAttribution>();
     const unsupportedVersionsFound = new Set<number>();
 
@@ -491,6 +522,7 @@ export class GitHubAPI {
           totalCommits: commits.length,
           commitsWithNotes: 0,
         },
+        error: this.lastError || undefined,
       };
     }
 
@@ -506,6 +538,7 @@ export class GitHubAPI {
           totalCommits: commits.length,
           commitsWithNotes: 0,
         },
+        error: this.lastError || undefined,
       };
     }
 
@@ -549,6 +582,7 @@ export class GitHubAPI {
         totalCommits: commits.length,
         commitsWithNotes: notes.size,
       },
+      error: this.lastError || undefined,
     };
   }
 

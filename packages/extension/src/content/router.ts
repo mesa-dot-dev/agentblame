@@ -120,7 +120,8 @@ async function processPRPage(): Promise<void> {
     showLoading();
 
     if (!githubApi) {
-      hideLoading();
+      showError("GitHub API not initialized · check token in extension settings");
+      hasProcessedSuccessfully = true;
       return;
     }
 
@@ -130,7 +131,8 @@ async function processPRPage(): Promise<void> {
       context.prNumber,
     );
     if (commits.length === 0) {
-      hideLoading();
+      showError("No commits found for this PR");
+      hasProcessedSuccessfully = true;
       return;
     }
 
@@ -142,12 +144,20 @@ async function processPRPage(): Promise<void> {
 
     hideLoading();
 
+    // Check for API errors (auth, rate limit, etc.)
+    if (notesResult.error) {
+      showError(notesResult.error.message);
+      hasProcessedSuccessfully = true;
+      return;
+    }
+
     // Check for unsupported versions
     if (notesResult.hasUnsupportedVersions) {
       const versions = notesResult.unsupportedVersionsFound.join(", ");
       showError(
         `Unsupported attribution format (v${versions}). Agent Blame ${MIN_SUPPORTED_VERSION}.0+ required. Please update your CLI and re-process commits.`
       );
+      hasProcessedSuccessfully = true;
       return;
     }
 

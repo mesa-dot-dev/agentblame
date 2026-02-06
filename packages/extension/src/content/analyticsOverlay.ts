@@ -600,7 +600,7 @@ function renderStatsSection(analytics: AnalyticsData): string {
       <div style="background: linear-gradient(135deg, rgba(83, 155, 245, 0.15) 0%, rgba(83, 155, 245, 0.05) 100%); border: 1px solid rgba(83, 155, 245, 0.3); border-radius: 12px; padding: 20px; position: relative; overflow: hidden;">
         <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: rgba(83, 155, 245, 0.1); border-radius: 50%;"></div>
         <div style="position: relative;">
-          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #539BF5; opacity: 0.8; margin-bottom: 8px;">Efficiency</div>
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #539BF5; opacity: 0.8; margin-bottom: 8px;">Prompt Efficiency</div>
           <div style="font-size: 36px; font-weight: 800; color: #539BF5; line-height: 1; letter-spacing: -2px;">${efficiencyStr}</div>
           <div style="font-size: 13px; color: var(--color-fg-muted); margin-top: 4px;">${summary.commits} commits · ${summary.prompts} prompts</div>
         </div>
