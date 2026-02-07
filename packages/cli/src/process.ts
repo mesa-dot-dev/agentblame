@@ -50,18 +50,7 @@ import type {
   SessionMetadata,
   ProcessResult,
 } from "./lib/types";
-
-// Terminal colors
-const c = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  cyan: "\x1b[36m",
-  yellow: "\x1b[33m",
-  green: "\x1b[32m",
-  orange: "\x1b[38;2;184;101;64m",
-  blue: "\x1b[34m",
-};
+import { colors as c } from "./lib/colors";
 
 /**
  * Detect and record human edits made after the last AI edit but before commit.

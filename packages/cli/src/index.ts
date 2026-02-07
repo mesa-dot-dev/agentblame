@@ -29,6 +29,7 @@ import {
   detectHooksSetup,
   isGitHookInstalled,
 } from "./lib/hooks";
+import { colors as c } from "./lib/colors";
 import { getRepoRoot, runGit } from "./lib/git/gitCli";
 import {
   initGlobalDatabase,
@@ -193,7 +194,7 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   const repoRoot = await getRepoRoot(process.cwd());
   if (!repoRoot) {
     console.log("");
-    console.log("  \x1b[31m✗\x1b[0m Not in a git repository");
+    console.log(`  ${c.red}✗${c.reset} Not in a git repository`);
     console.log("");
     console.log("  Run this command from inside a git repository.");
     console.log("");
@@ -202,12 +203,12 @@ async function runInit(initArgs: string[] = []): Promise<void> {
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame - Repository Setup\x1b[0m");
-  console.log("  \x1b[2mOne user runs this, commits to git, everyone benefits\x1b[0m");
+  console.log(`  ${c.bold}${c.magenta}◆${c.reset} ${c.bold}Agent Blame - Repository Setup${c.reset}`);
+  console.log(`  ${c.dim}One user runs this, commits to git, everyone benefits${c.reset}`);
   console.log("");
 
   const repoName = path.basename(repoRoot);
-  console.log(`  \x1b[2mRepository:\x1b[0m ${repoName}`);
+  console.log(`  ${c.dim}Repository:${c.reset} ${repoName}`);
   console.log("");
 
   // Track results
@@ -275,11 +276,11 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   results.push({ name: "Analytics anchor tag", success: analyticsTagSuccess });
 
   // Print results
-  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log(`  ${c.dim}─────────────────────────────────────────${c.reset}`);
   console.log("");
 
   for (const result of results) {
-    const icon = result.success ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+    const icon = result.success ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
     console.log(`  ${icon} ${result.name}`);
   }
 
@@ -287,25 +288,25 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   const anySuccess = results.some((r) => r.success);
 
   console.log("");
-  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log(`  ${c.dim}─────────────────────────────────────────${c.reset}`);
   console.log("");
 
   if (allSuccess) {
-    console.log("  \x1b[32m✓\x1b[0m \x1b[1mRepository setup complete\x1b[0m");
+    console.log(`  ${c.green}✓${c.reset} ${c.bold}Repository setup complete${c.reset}`);
   } else if (anySuccess) {
-    console.log("  \x1b[33m!\x1b[0m \x1b[1mSetup completed with warnings\x1b[0m");
+    console.log(`  ${c.yellow}!${c.reset} ${c.bold}Setup completed with warnings${c.reset}`);
   } else {
-    console.log("  \x1b[31m✗\x1b[0m \x1b[1mSetup failed\x1b[0m");
+    console.log(`  ${c.red}✗${c.reset} ${c.bold}Setup failed${c.reset}`);
   }
 
   console.log("");
-  console.log("  \x1b[1mNext steps:\x1b[0m");
+  console.log(`  ${c.bold}Next steps:${c.reset}`);
   console.log(
-    "  \x1b[33m1.\x1b[0m Commit: \x1b[36m.cursor/\x1b[0m, \x1b[36m.claude/\x1b[0m, \x1b[36m.opencode/\x1b[0m, \x1b[36m.github/workflows/\x1b[0m"
+    `  ${c.yellow}1.${c.reset} Commit: ${c.cyan}.cursor/${c.reset}, ${c.cyan}.claude/${c.reset}, ${c.cyan}.opencode/${c.reset}, ${c.cyan}.github/workflows/${c.reset}`
   );
-  console.log("  \x1b[33m2.\x1b[0m Push to share with your team");
+  console.log(`  ${c.yellow}2.${c.reset} Push to share with your team`);
   console.log("");
-  console.log("  \x1b[2mTeammates run:\x1b[0m \x1b[36mbunx @mesadev/agentblame@latest setup\x1b[0m");
+  console.log(`  ${c.dim}Teammates run:${c.reset} ${c.cyan}bunx @mesadev/agentblame@latest setup${c.reset}`);
   console.log("");
 
   logCommandSuccess("init", { repo: repoName });
@@ -319,18 +320,18 @@ async function runStatus(): Promise<void> {
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame Status\x1b[0m");
+  console.log(`  ${c.bold}${c.magenta}◆${c.reset} ${c.bold}Agent Blame Status${c.reset}`);
   console.log("");
 
   // Initialize global database
   initGlobalDatabase();
 
   // Show global database location
-  console.log(`  \x1b[2mDatabase:\x1b[0m ${getGlobalAgentBlameDir()}/agentblame.db`);
+  console.log(`  ${c.dim}Database:${c.reset} ${getGlobalAgentBlameDir()}/agentblame.db`);
   console.log("");
 
   // Show global stats
-  console.log("  \x1b[1mGlobal Stats:\x1b[0m");
+  console.log(`  ${c.bold}Global Stats:${c.reset}`);
   const globalStats = getStats();
   console.log(`    Sessions: ${globalStats.sessions}`);
   console.log(`    Prompts: ${globalStats.prompts}`);
@@ -341,7 +342,7 @@ async function runStatus(): Promise<void> {
   if (repoRoot) {
     const repoName = path.basename(repoRoot);
     console.log("");
-    console.log(`  \x1b[1mCurrent Repository:\x1b[0m ${repoName}`);
+    console.log(`  ${c.bold}Current Repository:${c.reset} ${repoName}`);
 
     // Check for hooks
     const cursorHooksPath = path.join(repoRoot, ".cursor", "hooks.json");
@@ -354,13 +355,13 @@ async function runStatus(): Promise<void> {
     const hooksSetup = await detectHooksSetup(repoRoot);
     const hasGitHook = await isGitHookInstalled(repoRoot);
 
-    console.log(`    Cursor hooks: ${hasCursorHooks ? "\x1b[32m✓\x1b[0m" : "\x1b[33m✗\x1b[0m"}`);
-    console.log(`    Claude hooks: ${hasClaudeHooks ? "\x1b[32m✓\x1b[0m" : "\x1b[33m✗\x1b[0m"}`);
+    console.log(`    Cursor hooks: ${hasCursorHooks ? `${c.green}✓${c.reset}` : `${c.yellow}✗${c.reset}`}`);
+    console.log(`    Claude hooks: ${hasClaudeHooks ? `${c.green}✓${c.reset}` : `${c.yellow}✗${c.reset}`}`);
 
     if (hasGitHook) {
-      console.log(`    Git hook: \x1b[32m✓\x1b[0m (${hooksSetup.type})`);
+      console.log(`    Git hook: ${c.green}✓${c.reset} (${hooksSetup.type})`);
     } else {
-      console.log(`    Git hook: \x1b[33m✗\x1b[0m (auto-installs on first AI edit)`);
+      console.log(`    Git hook: ${c.yellow}✗${c.reset} (auto-installs on first AI edit)`);
     }
   }
 
@@ -379,12 +380,12 @@ async function runSetup(): Promise<void> {
 
   // Header
   console.log("");
-  console.log("  \x1b[1m\x1b[35m◆\x1b[0m \x1b[1mAgent Blame - Machine Setup\x1b[0m");
-  console.log("  \x1b[2mSetting up local machine (wipes existing data)\x1b[0m");
+  console.log(`  ${c.bold}${c.magenta}◆${c.reset} ${c.bold}Agent Blame - Machine Setup${c.reset}`);
+  console.log(`  ${c.dim}Setting up local machine (wipes existing data)${c.reset}`);
   console.log("");
 
   const globalDir = getGlobalAgentBlameDir();
-  console.log(`  \x1b[2mGlobal directory:\x1b[0m ${globalDir}`);
+  console.log(`  ${c.dim}Global directory:${c.reset} ${globalDir}`);
   console.log("");
 
   // Track results
@@ -418,27 +419,27 @@ async function runSetup(): Promise<void> {
   }
 
   // Print results
-  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log(`  ${c.dim}─────────────────────────────────────────${c.reset}`);
   console.log("");
 
   for (const result of results) {
-    const icon = result.success ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+    const icon = result.success ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
     console.log(`  ${icon} ${result.name}`);
   }
 
   const allSuccess = results.every((r) => r.success);
 
   console.log("");
-  console.log("  \x1b[2m─────────────────────────────────────────\x1b[0m");
+  console.log(`  ${c.dim}─────────────────────────────────────────${c.reset}`);
   console.log("");
 
   if (allSuccess) {
-    console.log("  \x1b[32m✓\x1b[0m \x1b[1mSetup complete\x1b[0m");
+    console.log(`  ${c.green}✓${c.reset} ${c.bold}Setup complete${c.reset}`);
     console.log("");
     console.log("  You're ready to track AI-generated code!");
-    console.log("  Run \x1b[36mbunx @mesadev/agentblame@latest setup\x1b[0m again to reset.");
+    console.log(`  Run ${c.cyan}bunx @mesadev/agentblame@latest setup${c.reset} again to reset.`);
   } else {
-    console.log("  \x1b[33m!\x1b[0m \x1b[1mSetup completed with warnings\x1b[0m");
+    console.log(`  ${c.yellow}!${c.reset} ${c.bold}Setup completed with warnings${c.reset}`);
   }
 
   console.log("");
@@ -574,19 +575,19 @@ async function runDebug(): Promise<void> {
 
   const repoId = getRepoIdentifier(repoRoot);
 
-  console.log("\n\x1b[1mAgent Blame Debug Info\x1b[0m\n");
+  console.log(`\n${c.bold}Agent Blame Debug Info${c.reset}\n`);
 
   // Show repo info
-  console.log(`\x1b[36mRepository:\x1b[0m ${repoRoot}`);
-  console.log(`\x1b[36mRepo ID:\x1b[0m ${repoId}`);
-  console.log(`\x1b[36mGlobal DB:\x1b[0m ${getGlobalAgentBlameDir()}/agentblame.db`);
+  console.log(`${c.cyan}Repository:${c.reset} ${repoRoot}`);
+  console.log(`${c.cyan}Repo ID:${c.reset} ${repoId}`);
+  console.log(`${c.cyan}Global DB:${c.reset} ${getGlobalAgentBlameDir()}/agentblame.db`);
 
   // Show current HEAD
   const head = await getGitHead(repoRoot);
-  console.log(`\x1b[36mCurrent HEAD:\x1b[0m ${head || "none"}`);
+  console.log(`${c.cyan}Current HEAD:${c.reset} ${head || "none"}`);
 
   // Show database stats
-  console.log("\n\x1b[1mDatabase:\x1b[0m");
+  console.log(`\n${c.bold}Database:${c.reset}`);
   try {
     const stats = getStats();
     console.log(`  Sessions: ${stats.sessions}`);
@@ -595,10 +596,10 @@ async function runDebug(): Promise<void> {
 
     // Show recent sessions with their tool calls
     if (stats.sessions > 0) {
-      console.log("\n\x1b[1mRecent Sessions:\x1b[0m");
+      console.log(`\n${c.bold}Recent Sessions:${c.reset}`);
       const sessions = getRecentSessions(5);
       for (const session of sessions) {
-        console.log(`\n  \x1b[33m${session.id}\x1b[0m`);
+        console.log(`\n  ${c.yellow}${session.id}${c.reset}`);
         console.log(`    Agent: ${session.agent}`);
         console.log(`    Model: ${session.model || "unknown"}`);
         console.log(`    Created: ${session.createdAt}`);
@@ -632,21 +633,21 @@ async function runDebug(): Promise<void> {
       }
     }
   } catch (err) {
-    console.log(`  \x1b[31mError:\x1b[0m ${err}`);
+    console.log(`  ${c.red}Error:${c.reset} ${err}`);
   }
 
   // Show working directories
-  console.log("\n\x1b[1mWorking Directories:\x1b[0m");
+  console.log(`\n${c.bold}Working Directories:${c.reset}`);
   const baseShas = getActiveBaseShas(repoRoot);
   if (baseShas.length === 0) {
-    console.log("  \x1b[33mNo working directories found\x1b[0m");
+    console.log(`  ${c.yellow}No working directories found${c.reset}`);
     console.log("  This means no AI edits have been captured since the last commit.");
   } else {
     for (const baseSha of baseShas) {
-      console.log(`\n  \x1b[33m${baseSha}\x1b[0m`);
+      console.log(`\n  ${c.yellow}${baseSha}${c.reset}`);
       const entries = readWorkingLog(repoRoot, baseSha);
       if (entries.length === 0) {
-        console.log("    \x1b[31mEmpty (no snapshots.jsonl entries)\x1b[0m");
+        console.log(`    ${c.red}Empty (no snapshots.jsonl entries)${c.reset}`);
       } else {
         console.log(`    Entries: ${entries.length}`);
         for (const entry of entries.slice(0, 5)) {
@@ -661,7 +662,7 @@ async function runDebug(): Promise<void> {
   }
 
   // Check agentblame directory structure
-  console.log("\n\x1b[1mDirectory Structure:\x1b[0m");
+  console.log(`\n${c.bold}Directory Structure:${c.reset}`);
   const agentBlameDir = getAgentBlameGitDir(repoRoot);
   if (fs.existsSync(agentBlameDir)) {
     console.log(`  ${agentBlameDir}/`);
@@ -678,10 +679,10 @@ async function runDebug(): Promise<void> {
         }
       }
     } catch (err) {
-      console.log(`    \x1b[31mError reading directory:\x1b[0m ${err}`);
+      console.log(`    ${c.red}Error reading directory:${c.reset} ${err}`);
     }
   } else {
-    console.log(`  \x1b[31mNot found:\x1b[0m ${agentBlameDir}`);
+    console.log(`  ${c.red}Not found:${c.reset} ${agentBlameDir}`);
     console.log("  This directory will be created on first AI edit.");
   }
 

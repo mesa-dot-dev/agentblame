@@ -569,7 +569,10 @@ if git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null; then
   # Add fetch refspec if not already configured (so notes auto-fetch on git pull)
   git config --local --get-all remote.origin.fetch 2>/dev/null | grep -q 'refs/notes/agentblame' || \
     git config --local --add remote.origin.fetch '+refs/notes/agentblame:refs/notes/agentblame' 2>/dev/null
-fi`;
+fi
+
+# Background update - fetch latest version for future captures (fire & forget)
+(nohup bunx @mesadev/agentblame@latest --version >/dev/null 2>&1 &) 2>/dev/null`;
 
     if (existingContent.trim()) {
       // Append to existing hook
@@ -585,61 +588,6 @@ fi`;
   } catch (err) {
     console.error("Failed to install git hook:", err);
     return { success: false, method: methodName };
-  }
-}
-
-/**
- * Install git post-commit hook to auto-process commits (per-repo)
- * Always installs/updates the hook - removes old agentblame section if present and adds latest
- */
-export async function installGitHook(repoRoot: string): Promise<boolean> {
-  const hooksDir = path.join(repoRoot, ".git", "hooks");
-  const hookPath = path.join(hooksDir, "post-commit");
-
-  // Use bunx to run agentblame (cached, fast) - fail silently if bun not installed
-  const hookContent = `#!/bin/sh
-# Agent Blame - Auto-process commits for AI attribution
-# Silently skips if bunx is not installed
-command -v bunx >/dev/null 2>&1 && bunx @mesadev/agentblame process HEAD 2>/dev/null || true
-
-# Push notes to remote - if successful, configure fetch refspec for auto-pull
-if git push origin refs/notes/agentblame:refs/notes/agentblame 2>/dev/null; then
-  # Add fetch refspec if not already configured (so notes auto-fetch on git pull)
-  git config --local --get-all remote.origin.fetch 2>/dev/null | grep -q 'refs/notes/agentblame' || \\
-    git config --local --add remote.origin.fetch '+refs/notes/agentblame:refs/notes/agentblame' 2>/dev/null
-fi
-`;
-
-  try {
-    await fs.promises.mkdir(hooksDir, { recursive: true });
-
-    // Check if hook already exists
-    let existingContent = "";
-    try {
-      existingContent = await fs.promises.readFile(hookPath, "utf8");
-    } catch {
-      // File doesn't exist
-    }
-
-    // Remove old agentblame section if present (to update to latest)
-    if (existingContent.includes("agentblame") || existingContent.includes("Agent Blame")) {
-      existingContent = removeAgentBlameSection(existingContent);
-    }
-
-    // Append to existing hook or create new
-    if (existingContent.trim()) {
-      // Append to existing hook (preserves user's other hooks)
-      const newContent = existingContent.trimEnd() + "\n\n" + hookContent.split("\n").slice(1).join("\n");
-      await fs.promises.writeFile(hookPath, newContent, { mode: 0o755 });
-    } else {
-      // Create new hook
-      await fs.promises.writeFile(hookPath, hookContent, { mode: 0o755 });
-    }
-
-    return true;
-  } catch (err) {
-    console.error("Failed to install git hook:", err);
-    return false;
   }
 }
 
