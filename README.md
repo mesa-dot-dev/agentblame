@@ -53,16 +53,17 @@ curl -fsSL https://bun.sh/install | bash
 
 ### 1. One-Time Machine Setup
 
-Run this once on your machine to create the local database:
+Run this once on your machine to create the local database and the `ab` shorthand:
 ```bash
 bunx @mesadev/agentblame@latest setup
 ```
+> After setup, restart your terminal. You can now use `ab` instead of `bunx @mesadev/agentblame@latest` for all commands.
 
 ### 2. Repository Setup
 
 In each git repository you want to track:
 ```bash
-bunx @mesadev/agentblame@latest init
+ab init
 ```
 
 This sets up everything automatically for your repository:
@@ -70,7 +71,7 @@ This sets up everything automatically for your repository:
 - Git post-commit hook for attribution capture
 - GitHub Actions workflow for squash/merge support
 
-> **Important:** Restart your editor after running init.
+> **Important:** Restart your editor after running `ab init`.
 
 <br>
 
@@ -125,7 +126,7 @@ You can use either Fine Grained Tokens (recommended) or Classic Tokens:
 Make AI edits, commit, then view attribution in CLI or GitHub PRs:
 
 ```bash
-bunx @mesadev/agentblame@latest blame src/auth.ts
+ab blame src/auth.ts
 ```
 
 <br>
@@ -171,15 +172,17 @@ Full repository-wide analytics, accessible from the **Insights** sidebar on any 
 
 ## CLI Reference
 
+> **First run:** `bunx @mesadev/agentblame@latest setup` — this creates the database and adds the `ab` shell alias. After restarting your terminal, use `ab` for all commands below.
+
 | Command | Description |
 |---------|-------------|
-| `bunx @mesadev/agentblame@latest setup` | One-time machine setup (creates ~/.agentblame database) |
-| `bunx @mesadev/agentblame@latest init` | Set up hooks and GitHub Actions workflow for a repo |
-| `bunx @mesadev/agentblame@latest clean` | Remove hooks from current repo |
-| `bunx @mesadev/agentblame@latest blame <file>` | Show AI attribution for a file |
-| `bunx @mesadev/agentblame@latest sync` | Transfer notes after squash/rebase |
-| `bunx @mesadev/agentblame@latest config` | Show/set configuration |
-| `bunx @mesadev/agentblame@latest debug` | Show detailed debug info |
+| `bunx @mesadev/agentblame@latest setup` | One-time machine setup (creates database + `ab` alias) |
+| `ab init` | Set up hooks and GitHub Actions workflow for a repo |
+| `ab status` | Show tracking stats for current repo |
+| `ab blame <file>` | Show AI attribution for a file |
+| `ab sync` | Transfer notes after squash/rebase |
+| `ab config` | Show/set configuration |
+| `ab debug` | Show detailed debug info |
 
 ---
 
@@ -212,9 +215,9 @@ Full repository-wide analytics, accessible from the **Insights** sidebar on any 
 | Problem | Solution |
 |---------|----------|
 | Database not found | Run `bunx @mesadev/agentblame@latest setup` once on your machine |
-| Hooks not capturing | Restart your editor; run `bunx @mesadev/agentblame@latest debug` to check status |
+| Hooks not capturing | Restart your editor; run `ab debug` to check status |
 | Notes not on GitHub | Run `git push origin refs/notes/agentblame` |
-| Squash merge lost attribution | Ensure workflow is committed; run `bunx @mesadev/agentblame@latest sync` locally |
+| Squash merge lost attribution | Ensure workflow is committed; run `ab sync` locally |
 | Bun not found | Install Bun: `curl -fsSL https://bun.sh/install \| bash` |
 
 ---

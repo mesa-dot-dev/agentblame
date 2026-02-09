@@ -121,27 +121,31 @@ function printHelp(): void {
 Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
-  agentblame setup             Set up local machine (run once, wipes and recreates DB)
-  agentblame init              Set up repo for AI tracking (first developer only)
-  agentblame status            Show tracking stats
-  agentblame blame <file>      Show AI attribution
-  agentblame sync              Transfer notes after squash/rebase
-  agentblame config            Show/set configuration
-  agentblame debug             Show detailed debug info
+  ab setup             Set up local machine (run once, wipes and recreates DB)
+  ab init              Set up repo for AI tracking (first developer only)
+  ab status            Show tracking stats
+  ab blame <file>      Show AI attribution
+  ab sync              Transfer notes after squash/rebase
+  ab config            Show/set configuration
+  ab debug             Show detailed debug info
 
-Setup:
-  First developer (once per repo):
-    bunx @mesadev/agentblame@latest init
-    git add .cursor/ .claude/ .github/
-    git commit && git push
+  'ab' is a shell alias added by 'bunx @mesadev/agentblame@latest setup'.
 
-  All developers (once per machine):
-    bunx @mesadev/agentblame@latest setup
+Getting started:
+  1. Run once per machine:  bunx @mesadev/agentblame@latest setup
+  2. Restart your terminal to activate the 'ab' alias
+  3. First developer (once per repo):
+       ab init
+       git add .cursor/ .claude/ .opencode/ .github/
+       git commit && git push
+  4. All other developers (once per machine):
+       bunx @mesadev/agentblame@latest setup
 
 Examples:
-  bunx @mesadev/agentblame@latest setup
-  bunx @mesadev/agentblame@latest init
-  bunx @mesadev/agentblame blame src/index.ts
+  ab init
+  ab blame src/index.ts
+  ab status
+  ab sync
 `);
 }
 
@@ -418,6 +422,58 @@ async function runSetup(): Promise<void> {
     results.push({ name: "Logs directory", success: false });
   }
 
+  // Install shell alias 'ab'
+  let shellProfilePath: string | null = null;
+  try {
+    const shell = process.env.SHELL || "";
+    const home = process.env.HOME || "";
+    const aliasLine = "alias ab='bunx @mesadev/agentblame@latest'";
+    const aliasComment = "# Added by agentblame setup";
+    let isFish = false;
+
+    if (shell.endsWith("/fish")) {
+      isFish = true;
+      shellProfilePath = path.join(home, ".config", "fish", "config.fish");
+    } else if (shell.endsWith("/zsh")) {
+      shellProfilePath = path.join(home, ".zshrc");
+    } else if (shell.endsWith("/bash")) {
+      const bashrc = path.join(home, ".bashrc");
+      const bashProfile = path.join(home, ".bash_profile");
+      shellProfilePath = fs.existsSync(bashrc) ? bashrc : bashProfile;
+    }
+
+    if (shellProfilePath && home) {
+      const fishAliasLine = "alias ab 'bunx @mesadev/agentblame@latest'";
+      const lineToWrite = isFish ? fishAliasLine : aliasLine;
+
+      if (fs.existsSync(shellProfilePath)) {
+        const content = await fs.promises.readFile(shellProfilePath, "utf8");
+        const alreadyExists = isFish
+          ? content.includes("alias ab ")
+          : content.includes("alias ab=");
+
+        if (alreadyExists) {
+          const profileName = path.basename(shellProfilePath);
+          results.push({ name: `Shell alias 'ab' (~/${profileName} - already configured)`, success: true });
+        } else {
+          await fs.promises.appendFile(shellProfilePath, `\n${aliasComment}\n${lineToWrite}\n`);
+          const profileName = path.basename(shellProfilePath);
+          results.push({ name: `Shell alias 'ab' (~/${profileName})`, success: true });
+        }
+      } else {
+        // Profile file doesn't exist yet, create it with the alias
+        await fs.promises.mkdir(path.dirname(shellProfilePath), { recursive: true });
+        await fs.promises.writeFile(shellProfilePath, `${aliasComment}\n${lineToWrite}\n`);
+        const profileName = path.basename(shellProfilePath);
+        results.push({ name: `Shell alias 'ab' (~/${profileName})`, success: true });
+      }
+    } else {
+      results.push({ name: "Shell alias 'ab'", success: false });
+    }
+  } catch (err) {
+    results.push({ name: "Shell alias 'ab'", success: false });
+  }
+
   // Print results
   console.log(`  ${c.dim}─────────────────────────────────────────${c.reset}`);
   console.log("");
@@ -437,9 +493,16 @@ async function runSetup(): Promise<void> {
     console.log(`  ${c.green}✓${c.reset} ${c.bold}Setup complete${c.reset}`);
     console.log("");
     console.log("  You're ready to track AI-generated code!");
-    console.log(`  Run ${c.cyan}bunx @mesadev/agentblame@latest setup${c.reset} again to reset.`);
+    if (shellProfilePath) {
+      const profileName = path.basename(shellProfilePath);
+      console.log(`  Tip: Restart your terminal (or run ${c.cyan}source ~/${profileName}${c.reset}) to use the ${c.cyan}ab${c.reset} shorthand.`);
+    }
   } else {
     console.log(`  ${c.yellow}!${c.reset} ${c.bold}Setup completed with warnings${c.reset}`);
+    if (!shellProfilePath) {
+      console.log(`  To set up the ${c.cyan}ab${c.reset} alias manually, add this to your shell profile:`);
+      console.log(`    ${c.cyan}alias ab='bunx @mesadev/agentblame@latest'${c.reset}`);
+    }
   }
 
   console.log("");
