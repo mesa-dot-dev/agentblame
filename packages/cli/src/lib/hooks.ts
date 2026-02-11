@@ -30,6 +30,13 @@ export function getOpenCodePluginDir(repoRoot: string): string {
 }
 
 /**
+ * Get the Copilot hooks.json path for a repo.
+ */
+export function getCopilotHooksPath(repoRoot: string): string {
+  return path.join(repoRoot, ".github", "hooks", "hooks.json");
+}
+
+/**
  * Get the OpenCode agentblame plugin file path for a repo.
  */
 export function getOpenCodePluginPath(repoRoot: string): string {
@@ -385,6 +392,116 @@ export async function areOpenCodeHooksInstalled(repoRoot: string): Promise<boole
 }
 
 /**
+ * Install the Copilot hooks at repo-level (.github/hooks/hooks.json)
+ */
+export async function installCopilotHooks(repoRoot: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    console.error("Windows is not supported yet");
+    return false;
+  }
+
+  const hooksPath = getCopilotHooksPath(repoRoot);
+
+  try {
+    // Create .github/hooks directory if it doesn't exist
+    await fs.promises.mkdir(path.dirname(hooksPath), { recursive: true });
+
+    let config: any = {};
+    try {
+      const existing = await fs.promises.readFile(hooksPath, "utf8");
+      config = JSON.parse(existing || "{}");
+    } catch {
+      // File doesn't exist or invalid JSON
+    }
+
+    config.version = config.version ?? 1;
+    config.hooks = config.hooks ?? {};
+
+    // iterate over the following hooktypes installing hooks: preToolUse, postToolUse, sessionStart, userPromptSubmitted
+    const hookTypeList = ["preToolUse", "postToolUse", "sessionStart", "userPromptSubmitted"];
+    for (const hookType of hookTypeList) {
+      // create the hook object
+      config.hooks[hookType] = config.hooks[hookType] ?? [];
+      if (!Array.isArray(config.hooks[hookType])) {
+        config.hooks[hookType] = [];
+      }
+
+      // Add the hook
+      config.hooks[hookType].push({
+        type: "command",
+        bash: `agentblame capture --provider copilot --event ${hookType}`,
+        cwd: ".",
+        timeoutSec: 10,
+      });
+    }
+
+    await fs.promises.writeFile(
+      hooksPath,
+      JSON.stringify(config, null, 2),
+      "utf8"
+    );
+
+    return true;
+  } catch (err) {
+    console.error("Failed to install Copilot hooks:", err);
+    return false;
+  }
+}
+
+/**
+ * Check if Copilot hooks are installed for a repo.
+ */
+export async function areCopilotHooksInstalled(repoRoot: string): Promise<boolean> {
+  try {
+    const hooksPath = getCopilotHooksPath(repoRoot);
+    const config = JSON.parse(
+      await fs.promises.readFile(hooksPath, "utf8")
+    );
+
+    const hasHook = config.hooks?.postToolUse?.some(
+      (h: any) => h?.bash?.includes("agentblame")
+    );
+    return hasHook === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Uninstall Copilot hooks from a repo
+ */
+export async function uninstallCopilotHooks(repoRoot: string): Promise<boolean> {
+  try {
+    const hooksPath = getCopilotHooksPath(repoRoot);
+    if (fs.existsSync(hooksPath)) {
+      const config = JSON.parse(
+        await fs.promises.readFile(hooksPath, "utf8")
+      );
+
+      const hookTypeList = ["preToolUse", "postToolUse", "sessionStart", "userPromptSubmitted"];
+      for (const hookType of hookTypeList) {
+        // remove the hook if it is from agentblame
+        if (config.hooks?.[hookType]) {
+          config.hooks[hookType] = config.hooks[hookType].filter(
+            (h: any) => !h?.bash?.includes("agentblame")
+          );
+        }
+      }
+
+      await fs.promises.writeFile(
+        hooksPath,
+        JSON.stringify(config, null, 2),
+        "utf8"
+      );
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to uninstall Copilot hooks:", err);
+    return false;
+  }
+}
+
+/**
  * Uninstall OpenCode hooks from a repo
  */
 export async function uninstallOpenCodeHooks(repoRoot: string): Promise<boolean> {
@@ -448,15 +565,16 @@ export async function areClaudeHooksInstalled(repoRoot: string): Promise<boolean
 }
 
 /**
- * Install all hooks (Cursor, Claude Code, and OpenCode) for a repo
+ * Install all hooks (Cursor, Claude Code, OpenCode, and Copilot) for a repo
  */
 export async function installAllHooks(
   repoRoot: string
-): Promise<{ cursor: boolean; claude: boolean; opencode: boolean }> {
+): Promise<{ cursor: boolean; claude: boolean; opencode: boolean; copilot: boolean }> {
   const cursor = await installCursorHooks(repoRoot);
   const claude = await installClaudeHooks(repoRoot);
   const opencode = await installOpenCodeHooks(repoRoot);
-  return { cursor, claude, opencode };
+  const copilot = await installCopilotHooks(repoRoot);
+  return { cursor, claude, opencode, copilot };
 }
 
 /**

@@ -12,7 +12,7 @@
 /**
  * AI agent that generated the code
  */
-export type AiAgent = "cursor" | "claude" | "opencode";
+export type AiAgent = "cursor" | "claude" | "opencode" | "copilot";
 
 // =============================================================================
 // Session Types (SQLite)

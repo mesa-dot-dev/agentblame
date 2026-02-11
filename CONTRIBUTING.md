@@ -22,6 +22,9 @@ bun install
 
 # Build all packages
 bun run build
+
+# Install the local version of agentblame globally (so `which agentblame` has your changes)
+cd packages/cli && npm install -g .
 ```
 
 ### Project Structure
