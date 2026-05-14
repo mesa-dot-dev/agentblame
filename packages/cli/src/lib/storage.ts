@@ -616,9 +616,15 @@ export function cleanupWorkingDir(repoRoot: string, baseSha: string): void {
   // Also clean up SQLite deltas for this base_sha
   try {
     const db = getDatabase();
-    db.prepare("DELETE FROM deltas WHERE base_sha = ?").run(baseSha);
-  } catch {
-    // DB might not be initialized — that's OK for cleanup
+    const result = db.prepare("DELETE FROM deltas WHERE base_sha = ?").run(baseSha);
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] Cleaned up ${result.changes} deltas for ${baseSha.slice(0, 8)}`);
+    }
+  } catch (err) {
+    // DB might not be initialized — that's OK for cleanup. Log other errors.
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] cleanup deltas skipped:`, err);
+    }
   }
 }
 

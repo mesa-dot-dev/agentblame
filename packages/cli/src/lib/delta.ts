@@ -86,7 +86,7 @@ function migrateJsonlIfExists(repoRoot: string, baseSha: string): void {
 
   // Insert all deltas in a single transaction
   const insertStmt = db.prepare(`
-    INSERT INTO deltas (base_sha, file_path, session_id, prompt_id, ts, hunks, after_blob)
+    INSERT OR IGNORE INTO deltas (base_sha, file_path, session_id, prompt_id, ts, hunks, after_blob)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 

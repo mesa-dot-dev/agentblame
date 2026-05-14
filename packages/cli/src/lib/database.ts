@@ -109,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
 CREATE INDEX IF NOT EXISTS idx_deltas_file ON deltas(base_sha, file_path);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deltas_dedup ON deltas(base_sha, file_path, ts, hunks);
 `;
 
 // =============================================================================
@@ -328,6 +329,7 @@ function runMigrations(db: Database): void {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_deltas_file ON deltas(base_sha, file_path)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_deltas_dedup ON deltas(base_sha, file_path, ts, hunks)");
 }
 
 // =============================================================================
