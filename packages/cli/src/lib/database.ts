@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS enabled_repos (
     enabled_at TEXT NOT NULL
 );
 
+-- Deltas: Append-only edit deltas for attribution replay
+CREATE TABLE IF NOT EXISTS deltas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    base_sha TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    session_id TEXT,
+    prompt_id INTEGER,
+    ts TEXT NOT NULL,
+    hunks TEXT NOT NULL,
+    after_blob TEXT
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent, conversation_id);
@@ -96,6 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_file ON tool_calls(file_path);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp);
+CREATE INDEX IF NOT EXISTS idx_deltas_file ON deltas(base_sha, file_path);
 `;
 
 // =============================================================================
@@ -272,6 +285,7 @@ export function resetDatabase(): void {
   db.exec("DROP TABLE IF EXISTS prompts");
   db.exec("DROP TABLE IF EXISTS sessions");
   db.exec("DROP TABLE IF EXISTS enabled_repos");
+  db.exec("DROP TABLE IF EXISTS deltas");
   db.exec(SCHEMA);
 }
 
@@ -299,6 +313,21 @@ function runMigrations(db: Database): void {
 
   // Create new indexes if they don't exist
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo)");
+
+  // Ensure deltas table exists (added in v3.2)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS deltas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      base_sha TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      session_id TEXT,
+      prompt_id INTEGER,
+      ts TEXT NOT NULL,
+      hunks TEXT NOT NULL,
+      after_blob TEXT
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_deltas_file ON deltas(base_sha, file_path)");
 }
 
 // =============================================================================

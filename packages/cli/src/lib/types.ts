@@ -347,7 +347,7 @@ export interface DeltaHunk {
 
 /**
  * An edit delta - represents what changed in one edit operation
- * Stored in deltas.jsonl, append-only
+ * Stored in the SQLite deltas table (append-only)
  */
 export interface EditDelta {
   ts: string;                    // ISO timestamp

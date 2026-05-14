@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { SnapshotEntry, InitialFile, Snapshot } from "./types";
+import { getDatabase } from "./database";
 
 // =============================================================================
 // Git Blob Storage
@@ -610,6 +611,14 @@ export function cleanupWorkingDir(repoRoot: string, baseSha: string): void {
 
   if (fs.existsSync(workingDir)) {
     fs.rmSync(workingDir, { recursive: true });
+  }
+
+  // Also clean up SQLite deltas for this base_sha
+  try {
+    const db = getDatabase();
+    db.prepare("DELETE FROM deltas WHERE base_sha = ?").run(baseSha);
+  } catch {
+    // DB might not be initialized — that's OK for cleanup
   }
 }
 
